@@ -1,7 +1,7 @@
 # SFerrand.Http.Testing
 
 A scripted, recording `HttpMessageHandler` to test code that uses `HttpClient`, in particular API clients built on
-[SFerrand.Http](https://git.vbmaf.net/sebastien/sferrand-http), end to end and without a network.
+[SFerrand.Http](https://github.com/sebmafate/sferrand-http), end to end and without a network.
 
 ```
 dotnet add package SFerrand.Http.Testing

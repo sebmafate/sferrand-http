@@ -10,8 +10,8 @@
     <MinVerDefaultPreReleaseIdentifiers>preview.0</MinVerDefaultPreReleaseIdentifiers>
     <Authors>Sébastien Ferrand</Authors>
     <Copyright>Copyright (c) 2026 Sébastien Ferrand</Copyright>
-    <PackageProjectUrl>https://git.vbmaf.net/sebastien/sferrand-http</PackageProjectUrl>
-    <RepositoryUrl>https://git.vbmaf.net/sebastien/sferrand-http.git</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/sebmafate/sferrand-http</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/sebmafate/sferrand-http.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
     <Description>Test helpers for HttpClient-based code: a scripted, recording HttpMessageHandler (responses, transport failures, hangs) to test typed API clients, such as those built on SFerrand.Http, end to end without a network.</Description>

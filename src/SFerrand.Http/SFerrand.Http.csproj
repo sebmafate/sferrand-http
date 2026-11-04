@@ -11,8 +11,8 @@
     <MinVerDefaultPreReleaseIdentifiers>preview.0</MinVerDefaultPreReleaseIdentifiers>
     <Authors>Sébastien Ferrand</Authors>
     <Copyright>Copyright (c) 2026 Sébastien Ferrand</Copyright>
-    <PackageProjectUrl>https://git.vbmaf.net/sebastien/sferrand-http</PackageProjectUrl>
-    <RepositoryUrl>https://git.vbmaf.net/sebastien/sferrand-http.git</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/sebmafate/sferrand-http</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/sebmafate/sferrand-http.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
     <Description>A base class for typed REST and GraphQL API clients: per-request auth and headers, JSON in/out, a result object instead of exceptions for HTTP errors, retries with exponential backoff and Retry-After support, per-attempt timeouts.</Description>
