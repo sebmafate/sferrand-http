@@ -21,6 +21,17 @@ public class StubHandlerTests
         Assert.AreEqual(string.Empty, await response.Content.ReadAsStringAsync());
     }
 
+    /// <summary>A step given no body answers without a <c>Content-Type</c> (a 204 does not announce JSON it does not carry).</summary>
+    [TestMethod]
+    public async Task AStepWithoutABody_HasNoContentType()
+    {
+        using var client = ClientFor(new StubHandler().Respond(HttpStatusCode.NoContent));
+
+        using var response = await client.GetAsync("x");
+
+        Assert.IsNull(response.Content.Headers.ContentType);
+    }
+
     [TestMethod]
     public async Task TheScriptIsReplayedInOrder_AndTheLastStepRepeats()
     {

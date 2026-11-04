@@ -123,8 +123,7 @@ public abstract partial class HttpClientBase
         PaginationOptions? paging = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        paging ??= new PaginationOptions();
-        ArgumentOutOfRangeException.ThrowIfLessThan(paging.MaxPages, 1);
+        paging ??= new PaginationOptions();   // MaxPages is validated by GetPagesAsync
         if (paging.PageSize is <= 0)
             throw new ArgumentOutOfRangeException(nameof(paging), "PageSize must be positive.");
 

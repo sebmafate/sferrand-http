@@ -52,6 +52,38 @@ public class ResilienceTests
         Assert.HasCount(1, handler.Requests);
     }
 
+    /// <summary>With no retry left, the deadline fires inside the attempt itself (not while waiting): it must still be reported as the total timeout, not as an attempt timeout.</summary>
+    [TestMethod]
+    public async Task TheTotalTimeout_IsReportedAsSuch_EvenWhenNoRetryIsLeft()
+    {
+        var client = TestClients.Create(new StubHandler().Hang(), o =>
+        {
+            o.Retry.MaxRetries = 0;
+            o.RequestTimeout = TimeSpan.FromSeconds(30);
+            o.TotalTimeout = TimeSpan.FromMilliseconds(100);
+        });
+
+        var ex = await Assert.ThrowsExactlyAsync<TimeoutException>(() => client.Get<Widget>("widgets"));
+
+        StringAssert.Contains(ex.Message, "total timeout");
+        Assert.DoesNotContain("timed out after", ex.Message);
+    }
+
+    [TestMethod]
+    public async Task AnAttemptTimeout_IsNotReportedAsTheTotalTimeout()
+    {
+        var client = TestClients.Create(new StubHandler().Hang(), o =>
+        {
+            o.Retry.MaxRetries = 0;
+            o.RequestTimeout = TimeSpan.FromMilliseconds(50);
+            o.TotalTimeout = TimeSpan.FromSeconds(30);
+        });
+
+        var ex = await Assert.ThrowsExactlyAsync<TimeoutException>(() => client.Get<Widget>("widgets"));
+
+        StringAssert.Contains(ex.Message, "timed out after");
+    }
+
     [TestMethod]
     public async Task TheCallersCancellation_IsStillACancellation_NotATimeout()
     {
@@ -205,6 +237,22 @@ public class ResilienceTests
 
         Assert.HasCount(2, handler.Requests);
         Assert.IsTrue(handler.Requests.All(r => r.Header("Idempotency-Key") == "my-own-key"));
+    }
+
+    /// <summary>A key the caller passes (whatever the case of the header name) is used as is, and no other key is even generated.</summary>
+    [TestMethod]
+    [DataRow("Idempotency-Key")]
+    [DataRow("idempotency-key")]
+    [DataRow("IDEMPOTENCY-KEY")]
+    public async Task WhenTheCallerSuppliesAKey_NoKeyIsGenerated(string headerName)
+    {
+        var generated = 0;
+        var (client, handler) = WithKeys(o => o.Retry.IdempotencyKeyFactory = () => $"generated-{++generated}", HttpStatusCode.OK);
+
+        await client.Post<Widget>("widgets", new Widget("w", 1), new Dictionary<string, string> { [headerName] = "mine" });
+
+        Assert.AreEqual(0, generated);
+        Assert.AreEqual("mine", handler.Requests.Single().Header("Idempotency-Key"));
     }
 
     [TestMethod]

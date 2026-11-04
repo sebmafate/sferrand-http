@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -108,6 +109,29 @@ public class RegistrationTests
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => provider.GetRequiredService<WidgetsClient>().Get("1"));
 
         Assert.AreEqual(0, contacted);
+    }
+
+    /// <summary>The handler registered by the extension decompresses: a gzip answer is read as the JSON it carries.</summary>
+    [TestMethod]
+    public async Task TheDefaultHandler_Decompresses()
+    {
+        var json = Encoding.UTF8.GetBytes("""{"name":"zipped","size":9}""");
+        using var compressed = new MemoryStream();
+        using (var gzip = new System.IO.Compression.GZipStream(compressed, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            gzip.Write(json);
+        var bytes = compressed.ToArray();
+        using var server = new TinyServer(response =>
+        {
+            response.StatusCode = 200;
+            response.ContentType = "application/json";
+            response.AddHeader("Content-Encoding", "gzip");
+            response.OutputStream.Write(bytes);
+        });
+        using var provider = Build(services => services.AddSFerrandHttpClient<WidgetsClient>(o => o.BaseUri = server.Url + "v1"));
+
+        var result = await provider.GetRequiredService<WidgetsClient>().Get("1");
+
+        Assert.AreEqual(new Widget("zipped", 9), result.Result);
     }
 
     [TestMethod]
@@ -232,6 +256,8 @@ public class RegistrationTests
         Assert.IsTrue(Validate(o => o.MaxDownloadBytes = 0).Failed);
         Assert.IsTrue(Validate(o => o.TotalTimeout = TimeSpan.Zero).Failed);
         Assert.IsTrue(Validate(o => o.RequestTimeout = TimeSpan.FromSeconds(-2)).Failed);
+        Assert.IsTrue(Validate(o => o.Retry.MaxRetries = -1).Failed);
+        Assert.IsTrue(Validate(o => o.MaxRedirects = -1).Failed);
         Assert.IsTrue(Validate(o => o.Retry.BaseDelay = TimeSpan.FromSeconds(-1)).Failed);
         Assert.IsTrue(Validate(o => o.Retry.MaxDelay = TimeSpan.FromSeconds(-1)).Failed);
     }

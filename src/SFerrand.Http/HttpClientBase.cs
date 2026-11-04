@@ -29,7 +29,11 @@ namespace SFerrand.Http;
 /// <item>Authentication and headers are set on each request, so the underlying <see cref="HttpClient"/> can be shared safely.</item>
 /// <item>Secure by default: requests only go to origins declared in the options, clear-text <c>http</c> is refused (except on the loopback interface),
 /// header values are checked for line breaks, path traversal is refused and response bodies are size-limited. See the README, section "Security".</item>
-/// <item>Transient failures are retried according to <see cref="HttpClientOptions.Retry"/>; only idempotent methods by default.</item>
+/// <item>Transient failures are retried according to <see cref="HttpClientOptions.Retry"/>; only idempotent methods by default, or any method that carries an idempotency key.</item>
+/// <item>Redirects are followed by the client itself, hop by hop, with credentials left behind at the first change of origin (<see cref="HttpClientOptions.MaxRedirects"/>).</item>
+/// <item>Beyond JSON verbs: GraphQL (<see cref="QueryGraphQLAsync{TData, TVariables}"/>), forms, multipart, bounded streamed downloads, and paginated reads as
+/// <see cref="IAsyncEnumerable{T}"/> (<see cref="ListAllAsync{TItem}"/>).</item>
+/// <item>Each logical call produces a span and metrics under the name <see cref="SFerrandHttpTelemetry.Name"/>.</item>
 /// </list>
 /// </remarks>
 public abstract partial class HttpClientBase
@@ -271,12 +275,12 @@ public abstract partial class HttpClientBase
     /// Use it for verbs that have no dedicated method (<c>HEAD</c>, <c>OPTIONS</c>...).
     /// </summary>
     /// <remarks>
-    /// <para>Every other method of this class is a thin wrapper around this one. For each call it:</para>
+    /// <para>The JSON verbs of this class are thin wrappers around this one; forms and multipart go through it too, and downloads and pagination are built on the same engine. For each call it:</para>
     /// <list type="number">
     /// <item>builds the URI (see the README, "URL building") and serializes the body <b>once</b>, since a body is replayed on retries;</item>
     /// <item>builds a <b>fresh</b> <see cref="HttpRequestMessage"/> per attempt (a message cannot be sent twice), evaluating the token and header factories again;</item>
-    /// <item>sends it with a per-attempt timeout; a failing status listed in <see cref="RetryOptions.RetryStatusCodes"/>, a
-    /// transport failure or a timeout leads to another attempt after a backoff delay (see <see cref="RetryOptions"/>);</item>
+    /// <item>sends it with a per-attempt timeout (and an optional overall deadline), following the redirects it leads to; a failing status listed in
+    /// <see cref="RetryOptions.RetryStatusCodes"/>, a transport failure or a timeout leads to another attempt after a backoff delay (see <see cref="RetryOptions"/>);</item>
     /// <item>returns the last <see cref="HttpResult{TResult}"/> when attempts run out or the status is not retryable.</item>
     /// </list>
     /// <para>Override it to add cross-cutting behaviour (correlation headers, metrics, circuit breaking...) around every call.</para>

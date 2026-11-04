@@ -154,7 +154,8 @@ public abstract partial class HttpClientBase
     /// <summary>The overall deadline of a call, retries and waits included; <see langword="null"/> when none is configured.</summary>
     private CancellationTokenSource? CreateTotalTimeout(CancellationToken cancellationToken)
     {
-        if (_options.TotalTimeout is not { } total || total <= TimeSpan.Zero || total == Timeout.InfiniteTimeSpan)
+        // Timeout.InfiniteTimeSpan is -1 ms, so "no deadline" is covered by the same test; zero is refused by the options validation.
+        if (_options.TotalTimeout is not { } total || total <= TimeSpan.Zero)
             return null;
 
         var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

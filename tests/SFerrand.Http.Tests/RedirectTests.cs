@@ -285,6 +285,23 @@ public class RedirectTests
         Assert.HasCount(3, handler.Requests);   // the request plus two hops
     }
 
+    /// <summary>The default is five hops: a chain of five is followed to the end, a chain of six is cut and its last redirect returned.</summary>
+    [TestMethod]
+    public async Task TheDefaultLimit_IsFiveHops()
+    {
+        var five = Redirecting(HttpStatusCode.Found, "/v1/1", Redirect(HttpStatusCode.Found, "/v1/2"), Redirect(HttpStatusCode.Found, "/v1/3"), Redirect(HttpStatusCode.Found, "/v1/4"),
+            Redirect(HttpStatusCode.Found, "/v1/5"), Ok());
+        var followed = await Client(five).Get<Widget>("widgets");
+        Assert.IsTrue(followed.IsSuccess);
+        Assert.HasCount(6, five.Requests);
+
+        var six = Redirecting(HttpStatusCode.Found, "/v1/1", Redirect(HttpStatusCode.Found, "/v1/2"), Redirect(HttpStatusCode.Found, "/v1/3"), Redirect(HttpStatusCode.Found, "/v1/4"),
+            Redirect(HttpStatusCode.Found, "/v1/5"), Redirect(HttpStatusCode.Found, "/v1/6"), Ok());
+        var cut = await Client(six).Get<Widget>("widgets");
+        Assert.AreEqual(HttpStatusCode.Found, cut.StatusCode);
+        Assert.HasCount(6, six.Requests);
+    }
+
     [TestMethod]
     public async Task WithZeroMaxRedirects_EveryRedirectIsReturnedAsTheResult()
     {

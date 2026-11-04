@@ -122,6 +122,19 @@ public class TelemetryTests
     }
 
     [TestMethod]
+    public async Task OneRetry_IsOneResend()
+    {
+        const string host = "oneretry.telemetry.test";
+        using var observation = new Observation(host);
+        var handler = new StubHandler().Respond(HttpStatusCode.ServiceUnavailable).Respond(HttpStatusCode.OK, """{"name":"w","size":3}""");
+
+        await ClientFor(host, handler).Get<Widget>("widgets");
+
+        Assert.AreEqual(1, observation.Activities.Single().GetTagItem("http.request.resend_count"));
+        Assert.AreEqual(1, observation.Of(SFerrandHttpTelemetry.RetriesMetric).Sum(m => m.Value));
+    }
+
+    [TestMethod]
     public async Task AFailingStatus_MarksTheSpanAndTheMetricAsAnError_WithoutThrowing()
     {
         const string host = "status.telemetry.test";

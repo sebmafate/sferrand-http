@@ -15,6 +15,7 @@ public class PaginationTests
     [DataRow("""<https://api.test/v1/x?page=2>; rel="next"; title="p2"; type="a, b"; x=";", <https://api.test/v1/x?page=9>; rel="last" """, "https://api.test/v1/x?page=2")]
     [DataRow("""<https://api.test/v1/x?page=1>; rel="prev", <https://api.test/v1/x?page=3>; rel="next", <https://api.test/v1/x?page=9>; rel="last" """, "https://api.test/v1/x?page=3")]
     [DataRow("<https://api.test/x?p=2>; rel=next", "https://api.test/x?p=2")]
+    [DataRow("<https://api.test/x?p=2>; title=\"a, b\"; rel=\"next\"", "https://api.test/x?p=2")]   // a comma inside quotes, before the relation, does not end the link
     [DataRow("<https://api.test/x?p=2>;rel=\"next\"", "https://api.test/x?p=2")]
     [DataRow("<https://api.test/x?p=2>; REL=\"NEXT\"", "https://api.test/x?p=2")]
     [DataRow("<https://api.test/x?p=2>; rel=\"prefetch next\"", "https://api.test/x?p=2")]
@@ -32,6 +33,7 @@ public class PaginationTests
     [DataRow("<https://api.test/x>; rel=\"prev\"")]
     [DataRow("<https://api.test/x>; rel=\"nextpage\"")]       // not the same relation
     [DataRow("<https://api.test/x>; title=\"next\"")]          // "next" is a title, not a relation
+    [DataRow("<https://api.test/x>; title=\"a; rel=next\"; rel=\"prev\"")]   // a semicolon inside quotes does not start a new parameter
     [DataRow("<https://api.test/x>")]
     [DataRow("<>; rel=\"next\"")]
     [DataRow("<https://api.test/x; rel=\"next\"")]             // unterminated
@@ -97,6 +99,53 @@ public class PaginationTests
         await Collect(client.ListAll<Widget>("widgets"));
 
         Assert.AreEqual("https://api.test/v1/other?cursor=abc", handler.Requests[1].Uri.AbsoluteUri);
+    }
+
+    [TestMethod]
+    public async Task ALinkRelativeToThePath_IsResolvedAgainstThePageJustRequested()
+    {
+        var handler = Pages((Items("a"), "<page2?x=1>; rel=\"next\""), (Items("b"), null));
+
+        await Collect(TestClients.Create(handler).ListAll<Widget>("widgets"));
+
+        Assert.AreEqual("https://api.test/v1/page2?x=1", handler.Requests[1].Uri.AbsoluteUri);   // next to "widgets", not at the root
+    }
+
+    /// <summary>The server's link is the address of the next page as it wants it asked: the caller's own parameters are not added back to it.</summary>
+    [TestMethod]
+    public async Task TheCallersParameters_AreNotAddedToTheAddressOfALink()
+    {
+        var handler = Pages((Items("a"), "<https://api.test/v1/widgets?cursor=abc>; rel=\"next\""), (Items("b"), null));
+
+        await Collect(TestClients.Create(handler).ListAll<Widget>("widgets", parameters: new Dictionary<string, string> { ["filter"] = "x" }));
+
+        StringAssert.Contains(handler.Requests[0].Uri.Query, "filter=x");
+        Assert.AreEqual("https://api.test/v1/widgets?cursor=abc", handler.Requests[1].Uri.AbsoluteUri);
+    }
+
+    [TestMethod]
+    public async Task ALinkWithAFragment_IsFollowedWithoutIt()
+    {
+        var handler = Pages((Items("a"), "<https://api.test/v1/widgets?page=2#top>; rel=\"next\""), (Items("b"), null));
+
+        await Collect(TestClients.Create(handler).ListAll<Widget>("widgets"));
+
+        Assert.AreEqual("https://api.test/v1/widgets?page=2", handler.Requests[1].Uri.AbsoluteUri);
+    }
+
+    /// <summary>An error page can carry a <c>Link</c> header too (a proxy, a framework); the walk still ends there.</summary>
+    [TestMethod]
+    public async Task AFailingPageEndsTheWalk_EvenIfItAnnouncesANextOne()
+    {
+        var handler = new StubHandler()
+            .Respond(HttpStatusCode.InternalServerError, null, r => r.Headers.TryAddWithoutValidation("Link", "<https://api.test/v1/widgets?page=2>; rel=\"next\""))
+            .Respond(HttpStatusCode.OK, Items("never"));
+        var client = TestClients.Create(handler, o => o.Retry.MaxRetries = 0);
+
+        var pages = await Collect(client.Pages<List<Widget>>("widgets"));
+
+        Assert.HasCount(1, pages);
+        Assert.HasCount(1, handler.Requests);
     }
 
     [TestMethod]

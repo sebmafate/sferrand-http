@@ -37,6 +37,38 @@ public class ErrorsTests
         Assert.AreEqual("required", problem.Extensions["errors"].GetProperty("name")[0].GetString());
     }
 
+    /// <summary>Any one of the five standard members is enough to recognize a problem document.</summary>
+    [TestMethod]
+    [DataRow("""{"type":"about:blank"}""")]
+    [DataRow("""{"title":"t"}""")]
+    [DataRow("""{"status":404}""")]
+    [DataRow("""{"detail":"d"}""")]
+    [DataRow("""{"instance":"/x"}""")]
+    public void OneStandardMember_IsEnough(string body)
+        => Assert.IsTrue(ProblemDetails.TryParse(body, out _));
+
+    /// <summary>A number that does not fit an int must not make the parser throw: it never throws.</summary>
+    [TestMethod]
+    [DataRow("""{"title":"t","status":12345678901}""")]
+    [DataRow("""{"title":"t","status":400.5}""")]
+    [DataRow("""{"title":"t","status":1e400}""")]
+    public void AnOutOfRangeOrFractionalStatus_IsIgnoredWithoutThrowing(string body)
+    {
+        Assert.IsTrue(ProblemDetails.TryParse(body, out var problem));
+
+        Assert.IsNull(problem!.Status);
+        Assert.AreEqual("t", problem.Title);
+    }
+
+    [TestMethod]
+    public void TheMessage_FallsBackToTheDetail_WhenThereIsNoTitle()
+    {
+        var ex = new ApiException(HttpStatusCode.Conflict, "Conflict", null, new ProblemDetails { Detail = "the name is taken" });
+
+        StringAssert.Contains(ex.Message, "the name is taken");
+        StringAssert.Contains(ex.Message, "409");
+    }
+
     [TestMethod]
     public void TheMemberNames_AreMatchedWithoutRegardToCase()
     {
@@ -236,6 +268,17 @@ public class ErrorsTests
         Assert.AreEqual(new Widget("w", 3), result.Result!.Data);
         Assert.HasCount(2, result.Result.Errors!);
         StringAssert.Contains(Assert.ThrowsExactly<GraphQLException>(() => result.Result.EnsureNoErrors()).Message, "2 errors");
+    }
+
+    [TestMethod]
+    public async Task AnEmptyErrorsList_IsNotAnError()
+    {
+        var handler = new StubHandler().Respond(HttpStatusCode.OK, """{"data":{"name":"w","size":3},"errors":[]}""");
+
+        var result = await GraphQlClient(handler).Query<Widget, object>(Query);
+
+        Assert.IsFalse(result.Result!.HasErrors);
+        Assert.AreEqual(new Widget("w", 3), result.Result.EnsureNoErrors());
     }
 
     [TestMethod]

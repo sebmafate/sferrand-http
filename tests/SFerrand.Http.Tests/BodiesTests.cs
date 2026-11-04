@@ -38,6 +38,17 @@ public class BodiesTests
         Assert.AreEqual("a%26admin=true%26role%3Droot&%C3%A9+%C3%BC=%E6%97%A5%E6%9C%AC", handler.Requests.Single().Body);
     }
 
+    /// <summary>The annotations say non-null, but a caller can still pass null: it is an empty value, not a crash.</summary>
+    [TestMethod]
+    public async Task ANullFormValue_IsAnEmptyValue()
+    {
+        var handler = new StubHandler().Respond(HttpStatusCode.OK, WidgetJson);
+
+        await TestClients.Create(handler).Form<Widget>("x", new[] { KeyValuePair.Create("a", (string)null!), KeyValuePair.Create("b", "2") });
+
+        Assert.AreEqual("a=&b=2", handler.Requests.Single().Body);
+    }
+
     [TestMethod]
     public async Task FormFields_KeepTheirOrder_Duplicates_AndEmptyValues()
     {
@@ -288,6 +299,45 @@ public class BodiesTests
         if (announced)
             Assert.AreEqual(0, destination.Length);   // refused before reading
         Assert.IsLessThanOrEqualTo(1_000L, destination.Length);
+    }
+
+    /// <summary>Gives its bytes in small chunks, so the limit is crossed after some bytes are already in the destination.</summary>
+    private sealed class ChunkedStream(int total, int chunk) : Stream
+    {
+        private int _remaining = total;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+        public override int Read(Span<byte> buffer)
+        {
+            var n = Math.Min(Math.Min(buffer.Length, chunk), _remaining);
+            buffer[..n].Fill(1);
+            _remaining -= n;
+            return n;
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    /// <summary>
+    /// The limit is crossed after bytes were written: that is a refusal for being too large (<see cref="HttpResponseTooLargeException"/>), not an "interrupted download", which is
+    /// what any other failure after the first byte is.
+    /// </summary>
+    [TestMethod]
+    public async Task CrossingTheLimitAfterSomeBytes_IsStillATooLargeError()
+    {
+        var handler = new StubHandler().Respond(HttpStatusCode.OK, null, r => r.Content = new StreamContent(new ChunkedStream(total: 5_000, chunk: 400)));
+        using var destination = new MemoryStream();
+
+        var ex = await Assert.ThrowsExactlyAsync<HttpResponseTooLargeException>(() => TestClients.Create(handler).Download("files/1", destination, maxBytes: 1_000));
+
+        Assert.AreEqual(1_000, ex.Limit);
+        Assert.AreEqual(800, destination.Length);   // two chunks were accepted, the third would have crossed the limit
     }
 
     [TestMethod]

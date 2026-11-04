@@ -39,15 +39,12 @@ public sealed class ProblemDetails
     public static bool TryParse(string? content, out ProblemDetails? problem)
     {
         problem = null;
-        if (string.IsNullOrWhiteSpace(content) || content.AsSpan().TrimStart()[0] != '{')
+        if (string.IsNullOrWhiteSpace(content) || content.AsSpan().TrimStart()[0] != '{')   // a JSON document that starts with '{' is an object
             return false;
 
         try
         {
             using var document = JsonDocument.Parse(content, new JsonDocumentOptions { MaxDepth = 32 });
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-                return false;
-
             string? type = null, title = null, detail = null, instance = null;
             int? status = null;
             var standard = false;

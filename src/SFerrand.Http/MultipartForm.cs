@@ -66,7 +66,7 @@ public sealed class MultipartForm
 
     internal async Task<RequestBody> BuildAsync(CancellationToken cancellationToken)
     {
-        using var content = new MultipartFormDataContent(Guid.NewGuid().ToString("N"));
+        using var content = new MultipartFormDataContent();   // the boundary is a new GUID for each instance
         foreach (var (name, fileName, bytes, contentType) in _parts)
         {
             var part = new ByteArrayContent(bytes);
