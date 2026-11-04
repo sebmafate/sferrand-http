@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 
 namespace SFerrand.Http.Tests.Support;
 
+/// <summary>A small serializable payload shared by the tests (JSON: <c>{"name":"w","size":3}</c> for <c>new Widget("w", 3)</c>).</summary>
 public sealed record Widget(string Name, int Size);
 
 /// <summary>Exposes the protected API of <see cref="HttpClientBase"/>.</summary>

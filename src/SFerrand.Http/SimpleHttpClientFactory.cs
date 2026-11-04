@@ -15,6 +15,7 @@ public sealed class SimpleHttpClientFactory : IHttpClientFactory, IDisposable
     private readonly ConcurrentDictionary<string, HttpClient> _clients = new(StringComparer.Ordinal);
     private readonly HttpMessageHandler? _handler;
 
+    /// <summary>Creates a factory whose clients all use <paramref name="handler"/>.</summary>
     /// <param name="handler">
     /// Handler used by every client, typically a stub in tests. It is not disposed with the factory.
     /// <see langword="null"/> uses the default handler.
@@ -25,7 +26,7 @@ public sealed class SimpleHttpClientFactory : IHttpClientFactory, IDisposable
     public HttpClient CreateClient(string name)
         => _clients.GetOrAdd(name ?? string.Empty, _ => _handler is null ? new HttpClient() : new HttpClient(_handler, disposeHandler: false));
 
-    /// <inheritdoc />
+    /// <summary>Disposes every client created so far. The custom handler, if any, is left to its owner.</summary>
     public void Dispose()
     {
         foreach (var client in _clients.Values)

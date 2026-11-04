@@ -5,6 +5,11 @@ using SFerrand.Http.Tests.Support;
 
 namespace SFerrand.Http.Tests;
 
+/// <summary>
+/// Behavioural tests of <see cref="HttpClientBase"/> against a recording stub handler (no network, no sleeping).
+/// Grouped by concern: construction, verbs, GraphQL, authentication and headers, retries, timeouts and cancellation, logging.
+/// The retry delays are shortened by <see cref="Support.TestClients"/>; delays that matter are asserted in the edge-case and integration classes.
+/// </summary>
 [TestClass]
 public class HttpClientBaseTests
 {
@@ -101,6 +106,9 @@ public class HttpClientBaseTests
         Assert.HasCount(1, handler.Requests);
     }
 
+    /// <summary>
+    /// A 2xx body that is not valid JSON is a contract violation, not a transient failure: it throws immediately and is not replayed.
+    /// </summary>
     [TestMethod]
     public async Task Get_OnMalformedSuccessBody_ThrowsWithoutRetrying()
     {
@@ -130,6 +138,10 @@ public class HttpClientBaseTests
         Assert.AreEqual(HttpStatusCode.Created, result.StatusCode);
     }
 
+    /// <summary>
+    /// The body parameter is typed <c>object</c>: serializing with that static type would emit <c>{}</c>.
+    /// The runtime type must be used, otherwise every property of an anonymous or derived body would silently vanish.
+    /// </summary>
     [TestMethod]
     public async Task Post_UsesTheRuntimeTypeOfTheBody()
     {
@@ -310,6 +322,11 @@ public class HttpClientBaseTests
         Assert.IsNull(handler.Requests.Single().Header("Authorization"));
     }
 
+    /// <summary>
+    /// Regression guard for the classic <c>DefaultRequestHeaders</c> trap: on a shared <see cref="HttpClient"/> every call would
+    /// append another value. Three calls must give three requests carrying one <c>Authorization</c> and one user agent each,
+    /// and the header factory must be re-evaluated (1, 2, 3) rather than cached.
+    /// </summary>
     [TestMethod]
     public async Task Headers_AreSetPerRequest_SoASharedHttpClientNeverAccumulatesThem()
     {
@@ -345,6 +362,10 @@ public class HttpClientBaseTests
         Assert.AreEqual("application/vnd.test+json", handler.Requests.Single().Header("Accept"));
     }
 
+    /// <summary>
+    /// <c>Content-Type</c> cannot be added to <c>HttpRequestMessage.Headers</c> (it throws). It must be routed to the content headers,
+    /// and replace the default <c>application/json</c> rather than add to it.
+    /// </summary>
     [TestMethod]
     public async Task PerCallContentHeaders_GoOnTheContent()
     {
@@ -356,6 +377,9 @@ public class HttpClientBaseTests
         Assert.AreEqual("application/vnd.api+json", handler.Requests.Single().Header("Content-Type"));
     }
 
+    /// <summary>
+    /// A request without body has no content to describe: a per-call <c>Content-Type</c> is dropped instead of throwing.
+    /// </summary>
     [TestMethod]
     public async Task ContentHeaders_AreIgnoredForRequestsWithoutABody()
     {
@@ -469,6 +493,9 @@ public class HttpClientBaseTests
         Assert.HasCount(1, handler.Requests);
     }
 
+    /// <summary>
+    /// <c>POST</c> is not idempotent: replaying it after a lost response could create the resource twice. Even a 503 yields a single attempt.
+    /// </summary>
     [TestMethod]
     public async Task Post_IsNotRetriedByDefault()
     {
@@ -493,6 +520,10 @@ public class HttpClientBaseTests
         Assert.HasCount(2, handler.Requests);
     }
 
+    /// <summary>
+    /// A request message cannot be sent twice, so each attempt rebuilds it. The body must be identical on both attempts (serialized once)
+    /// while the token factory is called again, so a refreshed token is used by the retry.
+    /// </summary>
     [TestMethod]
     public async Task Retried_PutRequests_ResendTheSameBody_AndFreshHeaders()
     {
@@ -508,6 +539,10 @@ public class HttpClientBaseTests
         Assert.AreEqual("Bearer t2", handler.Requests[1].Header("Authorization"));
     }
 
+    /// <summary>
+    /// When the server asks to wait longer than <c>MaxDelay</c>, waiting is pointless: the 429 is handed back to the caller
+    /// after a single attempt instead of sleeping for an hour or retrying too early.
+    /// </summary>
     [TestMethod]
     public async Task RetryAfterBeyondTheMaxDelay_ReturnsTheResponseImmediately()
     {
@@ -551,6 +586,10 @@ public class HttpClientBaseTests
 
     #region Timeouts and cancellation
 
+    /// <summary>
+    /// Timeouts are retried like transport errors. Once exhausted they surface as <see cref="TimeoutException"/> (with the URL, without the
+    /// query string) rather than as an anonymous <see cref="OperationCanceledException"/>, which would be indistinguishable from a caller cancellation.
+    /// </summary>
     [TestMethod]
     public async Task AttemptsThatTimeOut_AreRetried_ThenReportedAsTimeoutException()
     {
@@ -591,6 +630,9 @@ public class HttpClientBaseTests
         Assert.HasCount(1, handler.Requests);
     }
 
+    /// <summary>
+    /// The caller's token must also cancel the wait between attempts: the one-minute backoff would otherwise block shutdown.
+    /// </summary>
     [TestMethod]
     public async Task CallerCancellation_InterruptsTheRetryWait()
     {
@@ -611,6 +653,10 @@ public class HttpClientBaseTests
 
     #region Logging
 
+    /// <summary>
+    /// Query strings often carry secrets (<c>access_token</c>, signatures). Neither the key nor the value may reach the logs,
+    /// on the retry warning or on the final result, while the path stays visible for diagnostics.
+    /// </summary>
     [TestMethod]
     public async Task Logs_NeverContainTheQueryString()
     {

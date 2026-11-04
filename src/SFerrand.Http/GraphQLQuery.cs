@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace SFerrand.Http;
 
 /// <summary>
-/// The JSON body of a GraphQL request.
+/// The JSON body of a GraphQL request (<c>{"query": "...", "variables": {...}}</c>), as accepted by the usual GraphQL-over-HTTP servers.
 /// </summary>
 /// <typeparam name="TVariables">Type of the variables object.</typeparam>
 public class GraphQLQuery<TVariables>

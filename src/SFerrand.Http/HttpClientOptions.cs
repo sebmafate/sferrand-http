@@ -3,8 +3,21 @@ using System.Text.Json;
 namespace SFerrand.Http;
 
 /// <summary>
-/// Configuration of an <see cref="HttpClientBase"/>.
+/// Configuration of an <see cref="HttpClientBase"/>. Register it with the options pattern:
+/// <code>
+/// services.Configure&lt;HttpClientOptions&gt;(o =>
+/// {
+///     o.BaseUri = "https://api.example.com/v2";
+///     o.TokenFactory = () => tokens.Current;
+///     o.Headers["X-Client"] = () => "my-app";
+///     o.RequestTimeout = TimeSpan.FromSeconds(10);
+/// });
+/// </code>
 /// </summary>
+/// <remarks>
+/// <see cref="BaseUri"/> is the only mandatory setting. <see cref="Headers"/> and <see cref="Retry"/> are read-only
+/// properties: configure them in place (<c>o.Retry.MaxRetries = 1</c>).
+/// </remarks>
 public class HttpClientOptions
 {
     /// <summary>

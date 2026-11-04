@@ -4,6 +4,10 @@ using System.Text.Json;
 
 namespace SFerrand.Http.Tests;
 
+/// <summary>
+/// Tests of <see cref="HttpResult{TResult}"/>: deserialization rules (empty, null, raw string, invalid JSON), error results that
+/// keep the raw body, synthetic results and the implicit conversion.
+/// </summary>
 [TestClass]
 public class HttpResultTests
 {
@@ -63,6 +67,9 @@ public class HttpResultTests
         Assert.IsNull(result.Result);
     }
 
+    /// <summary>
+    /// With <c>TResult = string</c> no JSON parsing happens, so plain text, HTML or an error page is returned as is.
+    /// </summary>
     [TestMethod]
     public async Task StringResult_KeepsTheRawBody_EvenWhenItIsNotJson()
     {
@@ -73,6 +80,9 @@ public class HttpResultTests
         Assert.AreEqual("plain text", result.Result);
     }
 
+    /// <summary>
+    /// A success status with an unreadable body must not be reported as a success with a null result: that would hide a contract break.
+    /// </summary>
     [TestMethod]
     public async Task Success_WithInvalidJson_ThrowsJsonException()
     {

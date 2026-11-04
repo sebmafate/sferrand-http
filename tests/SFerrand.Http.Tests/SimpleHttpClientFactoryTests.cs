@@ -3,6 +3,10 @@ using SFerrand.Http.Tests.Support;
 
 namespace SFerrand.Http.Tests;
 
+/// <summary>
+/// Tests of <see cref="SimpleHttpClientFactory"/>: client caching per name, handler injection, ownership of the handler on dispose
+/// and thread safety.
+/// </summary>
 [TestClass]
 public class SimpleHttpClientFactoryTests
 {
@@ -51,6 +55,9 @@ public class SimpleHttpClientFactoryTests
         Assert.HasCount(1, handler.Requests);
     }
 
+    /// <summary>
+    /// Ownership rule: the factory disposes what it created (the clients) but not the handler the caller injected, which may be shared by other factories or inspected after the test.
+    /// </summary>
     [TestMethod]
     public async Task Dispose_DisposesTheClients_ButNotTheHandlerItWasGiven()
     {
@@ -79,6 +86,9 @@ public class SimpleHttpClientFactoryTests
         Assert.IsTrue(response.IsSuccessStatusCode);
     }
 
+    /// <summary>
+    /// 64 threads asking for the same name must all get the same instance (no duplicated clients, no race on the dictionary).
+    /// </summary>
     [TestMethod]
     public async Task ConcurrentCreation_YieldsASingleClientPerName()
     {

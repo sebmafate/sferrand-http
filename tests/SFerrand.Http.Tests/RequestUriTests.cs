@@ -2,6 +2,10 @@ using SFerrand.Http.Internal;
 
 namespace SFerrand.Http.Tests;
 
+/// <summary>
+/// Tests of the URI builder (an internal helper reached through <c>InternalsVisibleTo</c>): joining slashes, identifiers, query encoding and
+/// rejection of invalid bases.
+/// </summary>
 [TestClass]
 public class RequestUriTests
 {
@@ -44,6 +48,10 @@ public class RequestUriTests
         Assert.AreEqual("https://api.test/v1/search?page=2&q=a%20b%26c%3Dd&param%3E3=valeur%203&empty=", uri.AbsoluteUri);
     }
 
+    /// <summary>
+    /// Security-relevant: a user-controlled value containing <c>&amp;</c>, <c>=</c> or <c>#</c> must not be able to add parameters or start a fragment.
+    /// Those characters are chosen on purpose: <see cref="Uri"/> would normalize characters like <c>&gt;</c> by itself and hide a missing encoding.
+    /// </summary>
     [TestMethod]
     public void ParameterNamesAndValues_CannotInjectOtherParameters()
     {
@@ -74,6 +82,9 @@ public class RequestUriTests
     public void BlankBase_Throws(string baseUri)
         => Assert.ThrowsExactly<ArgumentException>(() => RequestUri.Build(baseUri, "x"));
 
+    /// <summary>
+    /// On Unix <c>Uri.TryCreate("/v1", UriKind.Absolute)</c> succeeds and yields <c>file:///v1</c>: only http(s) bases are accepted.
+    /// </summary>
     [TestMethod]
     [DataRow("/v1")]
     [DataRow("v1")]

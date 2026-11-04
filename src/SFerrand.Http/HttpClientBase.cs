@@ -35,6 +35,8 @@ public abstract class HttpClientBase
     private readonly HttpClientOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
+
+    // Resolved once at construction: explicit option, else the name of the host application, else the library name.
     private readonly string _userAgent;
 
     /// <summary>Creates a client from its options.</summary>
@@ -81,6 +83,16 @@ public abstract class HttpClientBase
     #region GET / LIST
 
     /// <summary>Sends a <c>GET</c> request and deserializes the body into <typeparamref name="TResult"/>.</summary>
+    /// <typeparam name="TResult">Type the response body is deserialized into; <see cref="string"/> keeps it raw.</typeparam>
+    /// <example>
+    /// <code>
+    /// // GET https://api.example.com/v2/widgets/42?expand=owner
+    /// var result = await GetAsync&lt;Widget&gt;("widgets", "42", new Dictionary&lt;string, string&gt; { ["expand"] = "owner" });
+    /// </code>
+    /// </example>
+    /// <exception cref="TimeoutException">Every attempt exceeded <see cref="HttpClientOptions.RequestTimeout"/>.</exception>
+    /// <exception cref="HttpRequestException">The transport failed on every attempt.</exception>
+    /// <exception cref="JsonException">A successful response body could not be deserialized.</exception>
     /// <param name="resourceUri">Path of the resource, appended to the base address.</param>
     /// <param name="id">Optional identifier appended as a path segment.</param>
     /// <param name="parameters">Optional query string parameters.</param>
@@ -97,6 +109,8 @@ public abstract class HttpClientBase
         => SendAsync<TResult>(HttpMethod.Get, resourceUri, id, parameters, body: null, headers, baseUri, cancellationToken);
 
     /// <summary>Sends a <c>GET</c> request and deserializes a JSON array into a sequence of <typeparamref name="TItem"/>.</summary>
+    /// <typeparam name="TItem">Type of the elements of the JSON array.</typeparam>
+    /// <remarks>Pagination is not followed: loop over pages in your own client, using <c>parameters</c> and the response headers.</remarks>
     /// <inheritdoc cref="GetAsync{TResult}"/>
     protected virtual Task<HttpResult<IEnumerable<TItem>>> ListAsync<TItem>(
         string resourceUri,
@@ -112,6 +126,11 @@ public abstract class HttpClientBase
     #region POST / PUT / PATCH / DELETE
 
     /// <summary>Sends a <c>POST</c> request with an optional JSON body.</summary>
+    /// <typeparam name="TResult">Type the response body is deserialized into; <see cref="string"/> keeps it raw.</typeparam>
+    /// <remarks>
+    /// <c>POST</c> is not idempotent, so it is <b>not retried</b> unless <see cref="RetryOptions.RetryNonIdempotentMethods"/> is set:
+    /// replaying it after a lost response could create the resource twice.
+    /// </remarks>
     /// <param name="resourceUri">Path of the resource, appended to the base address.</param>
     /// <param name="body">Object serialized as JSON; <see langword="null"/> sends no body.</param>
     /// <param name="headers">Optional headers for this call only.</param>
@@ -126,6 +145,8 @@ public abstract class HttpClientBase
         => SendAsync<TResult>(HttpMethod.Post, resourceUri, id: null, parameters: null, body, headers, baseUri, cancellationToken);
 
     /// <summary>Sends a <c>PUT</c> request with a JSON body.</summary>
+    /// <typeparam name="TResult">Type the response body is deserialized into; <see cref="string"/> keeps it raw.</typeparam>
+    /// <exception cref="ArgumentNullException"><paramref name="body"/> is <see langword="null"/>.</exception>
     /// <param name="resourceUri">Path of the resource, appended to the base address.</param>
     /// <param name="body">Object serialized as JSON.</param>
     /// <param name="id">Optional identifier appended as a path segment.</param>
@@ -145,6 +166,7 @@ public abstract class HttpClientBase
     }
 
     /// <summary>Sends a <c>PATCH</c> request with a JSON body.</summary>
+    /// <remarks>Like <c>POST</c>, <c>PATCH</c> is not retried unless <see cref="RetryOptions.RetryNonIdempotentMethods"/> is set.</remarks>
     /// <inheritdoc cref="PutAsync{TResult}"/>
     protected virtual Task<HttpResult<TResult>> PatchAsync<TResult>(
         string resourceUri,
@@ -160,6 +182,10 @@ public abstract class HttpClientBase
 
     /// <summary>Sends a <c>DELETE</c> request, with an optional JSON body.</summary>
     /// <returns><see langword="true"/> for a 2xx status; the failure is logged otherwise.</returns>
+    /// <remarks>
+    /// Only the outcome is returned. Call <see cref="SendAsync{TResult}"/> with <see cref="HttpMethod.Delete"/>
+    /// when you need the status code or the error body.
+    /// </remarks>
     /// <inheritdoc cref="PutAsync{TResult}"/>
     protected virtual async Task<bool> DeleteAsync(
         string resourceUri,
@@ -179,6 +205,17 @@ public abstract class HttpClientBase
     #region GraphQL
 
     /// <summary>Sends a GraphQL query as a <c>POST</c> to <see cref="HttpClientOptions.GraphQLUri"/>.</summary>
+    /// <remarks>
+    /// GraphQL reports most failures with a <c>200 OK</c> and an <c>errors</c> array: inspect your envelope type,
+    /// not only <see cref="HttpResult{TResult}.IsSuccess"/>. Queries are not retried unless
+    /// <see cref="RetryOptions.RetryNonIdempotentMethods"/> is set, since the verb is <c>POST</c> (mutations are not safe to replay).
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var query = new GraphQLQuery&lt;object&gt; { Query = "query($id: ID!) { widget(id: $id) { name } }", Variables = new { id = "42" } };
+    /// var result = await SendGraphQLAsync&lt;WidgetEnvelope, object&gt;(query);
+    /// </code>
+    /// </example>
     /// <typeparam name="TResult">Type of the response envelope (usually with <c>data</c> and <c>errors</c>).</typeparam>
     /// <typeparam name="TVariables">Type of the variables object.</typeparam>
     /// <param name="query">The query and its variables.</param>
@@ -206,6 +243,24 @@ public abstract class HttpClientBase
     /// Sends a request with the retry policy, timeout, authentication and headers of this client.
     /// Use it for verbs that have no dedicated method (<c>HEAD</c>, <c>OPTIONS</c>...).
     /// </summary>
+    /// <remarks>
+    /// <para>Every other method of this class is a thin wrapper around this one. For each call it:</para>
+    /// <list type="number">
+    /// <item>builds the URI (see the README, "URL building") and serializes the body <b>once</b>, since a body is replayed on retries;</item>
+    /// <item>builds a <b>fresh</b> <see cref="HttpRequestMessage"/> per attempt (a message cannot be sent twice), evaluating the token and header factories again;</item>
+    /// <item>sends it with a per-attempt timeout; a failing status listed in <see cref="RetryOptions.RetryStatusCodes"/>, a
+    /// transport failure or a timeout leads to another attempt after a backoff delay (see <see cref="RetryOptions"/>);</item>
+    /// <item>returns the last <see cref="HttpResult{TResult}"/> when attempts run out or the status is not retryable.</item>
+    /// </list>
+    /// <para>Override it to add cross-cutting behaviour (correlation headers, metrics, circuit breaking...) around every call.</para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // HEAD: is the widget there?
+    /// var head = await SendAsync&lt;string&gt;(HttpMethod.Head, "widgets", "42", null, null, null, null, ct);
+    /// bool exists = head.StatusCode == HttpStatusCode.OK;
+    /// </code>
+    /// </example>
     /// <typeparam name="TResult">Type of the response body; <see cref="string"/> keeps it raw.</typeparam>
     /// <param name="method">The HTTP method.</param>
     /// <param name="resourceUri">Path of the resource, appended to the base address.</param>
@@ -232,9 +287,11 @@ public abstract class HttpClientBase
 
         var uri = RequestUri.Build(baseUri ?? _options.BaseUri, resourceUri, id, parameters);
         var loggedUri = uri.GetLeftPart(UriPartial.Path); // the query string may carry secrets
+        // Serialize with the runtime type (not TResult or object) and only once: the same bytes are replayed on every retry.
         var payload = body is null ? null : JsonSerializer.SerializeToUtf8Bytes(body, body.GetType(), JsonSerializerOptions);
 
         var retry = _options.Retry;
+        // A non-idempotent method gets a single attempt: retrying it could repeat a side effect.
         var maxAttempts = retry.IsEligible(method) ? Math.Max(retry.MaxRetries, 0) + 1 : 1;
 
         for (var attempt = 1; ; attempt++)
@@ -244,6 +301,9 @@ public abstract class HttpClientBase
             try
             {
                 using var request = await CreateRequestAsync(method, uri, payload, headers, cancellationToken).ConfigureAwait(false);
+
+                // The timeout applies to one attempt (headers + body read), not to the whole call. It is a linked source,
+                // so the caller's token still cancels immediately, and we can tell the two cases apart in the catch below.
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 if (_options.RequestTimeout > TimeSpan.Zero && _options.RequestTimeout != Timeout.InfiniteTimeSpan)
                     attemptCts.CancelAfter(_options.RequestTimeout);
@@ -258,6 +318,7 @@ public abstract class HttpClientBase
                     return result;
                 }
 
+                // null means "do not retry": attempts exhausted, status not retryable, or Retry-After longer than MaxDelay.
                 var nextDelay = attempt < maxAttempts && retry.RetryStatusCodes.Contains(result.StatusCode)
                     ? retry.GetDelay(attempt, response.Headers.RetryAfter)
                     : null;
@@ -273,7 +334,7 @@ public abstract class HttpClientBase
             }
             catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
             {
-                // Not cancelled by the caller: the attempt timed out.
+                // Not cancelled by the caller (that case is not caught and propagates as is): the attempt timed out.
                 if (attempt >= maxAttempts)
                     throw new TimeoutException($"HTTP {method} {loggedUri} timed out after {_options.RequestTimeout.TotalSeconds:0.##} s (attempts: {attempt}).", ex);
 
@@ -286,11 +347,15 @@ public abstract class HttpClientBase
                 _logger.LogWarning(ex, "HTTP {Method} {Uri} failed; retry {Attempt}/{MaxRetries} in {DelayMs} ms", method, loggedUri, attempt, maxAttempts - 1, (int)delay.TotalMilliseconds);
             }
 
+            // Reached only when a retry was decided above; every other path returned or threw.
             await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    /// <summary>Builds a fresh request: a message cannot be sent twice, so every attempt gets its own.</summary>
+    /// <summary>
+    /// Builds a fresh request: a message cannot be sent twice, so every attempt gets its own.
+    /// Headers are applied in increasing priority: <c>User-Agent</c>, authorization, option headers, per-call headers.
+    /// </summary>
     private async Task<HttpRequestMessage> CreateRequestAsync(
         HttpMethod method,
         Uri uri,
@@ -339,7 +404,7 @@ public abstract class HttpClientBase
         }
     }
 
-    // Headers that .NET only accepts on HttpContent: using them on the request headers throws.
+    // Headers that .NET only accepts on HttpContent: adding them to HttpRequestMessage.Headers throws.
     private static readonly HashSet<string> ContentHeaderNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "Allow", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Length",

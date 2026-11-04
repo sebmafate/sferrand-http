@@ -118,6 +118,9 @@ public class IntegrationTests
         Assert.AreEqual("DELETE", server.Requests[1].Method);
     }
 
+    /// <summary>
+    /// Timing-based by nature: the server answers after 2 s, the attempt budget is 100 ms, so the margin is 20x and the test stays reliable on a slow CI machine.
+    /// </summary>
     [TestMethod]
     public async Task ASlowServer_TriggersTheAttemptTimeout()
     {
@@ -135,6 +138,10 @@ public class IntegrationTests
         await Assert.ThrowsExactlyAsync<TimeoutException>(() => client.Get<Widget>("widgets"));
     }
 
+    /// <summary>
+    /// Reserves a free port, stops the server, then calls it: the operating system refuses the connection, giving a genuine <see cref="HttpRequestException"/>
+    /// that no stub can reproduce faithfully.
+    /// </summary>
     [TestMethod]
     public async Task ARefusedConnection_IsRetriedThenRethrown()
     {
@@ -147,6 +154,9 @@ public class IntegrationTests
         await Assert.ThrowsExactlyAsync<HttpRequestException>(() => client.Get<Widget>("widgets"));
     }
 
+    /// <summary>
+    /// 40 concurrent requests over real sockets and one pooled <see cref="HttpClient"/>: each response must match its own request.
+    /// </summary>
     [TestMethod]
     public async Task ManyConcurrentCalls_ShareOneHttpClient_WithoutCrossTalk()
     {

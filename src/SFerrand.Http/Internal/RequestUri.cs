@@ -15,6 +15,11 @@ internal static class RequestUri
     /// <item>Query parameters are URL-encoded and added after any query already present in the resource.</item>
     /// </list>
     /// </summary>
+    /// <param name="baseUri">Absolute http(s) base address.</param>
+    /// <param name="resourceUri">Relative path (or absolute URL) of the resource; may be empty to target the base itself.</param>
+    /// <param name="id">Optional identifier appended as path segment(s).</param>
+    /// <param name="parameters">Optional query parameters, appended in order.</param>
+    /// <exception cref="ArgumentException"><paramref name="baseUri"/> is not an absolute http(s) address.</exception>
     public static Uri Build(string baseUri, string resourceUri, string? id = null, IEnumerable<KeyValuePair<string, string>>? parameters = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUri);

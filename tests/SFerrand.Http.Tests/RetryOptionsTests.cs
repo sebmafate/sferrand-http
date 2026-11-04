@@ -3,6 +3,10 @@ using System.Net.Http.Headers;
 
 namespace SFerrand.Http.Tests;
 
+/// <summary>
+/// Tests of the retry policy maths (<see cref="RetryOptions"/>): exponential growth and cap, jitter bounds, <c>Retry-After</c> in both forms,
+/// and which methods may be replayed. Randomness and the clock are injected, so these tests are exact and instantaneous.
+/// </summary>
 [TestClass]
 public class RetryOptionsTests
 {
@@ -24,6 +28,9 @@ public class RetryOptionsTests
         Assert.AreEqual(TimeSpan.FromMilliseconds(expectedMaxMs / 2.0), options.GetDelay(attempt, random: () => 0.0));
     }
 
+    /// <summary>
+    /// "Equal jitter": the delay is never below half of the exponential value (guaranteed minimum wait) and never above it.
+    /// </summary>
     [TestMethod]
     public void Delay_JitterStaysBetweenHalfAndFull()
     {
@@ -61,6 +68,9 @@ public class RetryOptionsTests
         Assert.IsNull(Options().GetDelay(1, retryAfter));
     }
 
+    /// <summary>
+    /// A <c>Retry-After</c> that expired already carries no information: falling back to the backoff avoids an immediate hot retry loop.
+    /// </summary>
     [TestMethod]
     public void RetryAfterInThePastOrZero_FallsBackToBackoff()
     {

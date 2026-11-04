@@ -51,7 +51,7 @@ public class HttpResult<TResult>
     /// <summary>The deserialized body; <see langword="null"/> on error statuses and empty bodies.</summary>
     public TResult? Result { get; protected init; }
 
-    /// <summary>Unwraps the deserialized body.</summary>
+    /// <summary>Unwraps the deserialized body, so <c>Widget? w = await client.GetAsync("1");</c> works.</summary>
     public static implicit operator TResult?(HttpResult<TResult> result)
     {
         ArgumentNullException.ThrowIfNull(result);
@@ -86,7 +86,9 @@ public class HttpResult<TResult>
         };
     }
 
-    /// <summary>Wraps an already available object in a successful (<c>200 OK</c>) result.</summary>
+    /// <summary>Wraps an already available object in a successful (<c>200 OK</c>) result, e.g. for a cache hit or a test double.</summary>
+    /// <param name="result">The value exposed as <see cref="Result"/>.</param>
+    /// <param name="options">JSON options used to fill <see cref="Content"/>. Default: <see cref="JsonSerializerDefaults.Web"/>.</param>
     public static HttpResult<TResult> CreateFromObject(TResult result, JsonSerializerOptions? options = null)
         => new()
         {
@@ -97,6 +99,7 @@ public class HttpResult<TResult>
             Result = result,
         };
 
+    // string: the raw body is the result. Empty body: no result (204, HEAD...). Otherwise JSON; invalid JSON throws JsonException.
     private static TResult? Deserialize(string content, JsonSerializerOptions? options)
     {
         if (typeof(TResult) == typeof(string))

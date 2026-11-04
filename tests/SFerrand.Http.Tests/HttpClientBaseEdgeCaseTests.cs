@@ -6,6 +6,10 @@ using SFerrand.Http.Tests.Support;
 
 namespace SFerrand.Http.Tests;
 
+/// <summary>
+/// Less common paths of <see cref="HttpClientBase"/>: invalid construction, cancellation versus timeout classification,
+/// failing token factories, <c>Retry-After</c> handling with real waiting, custom retry statuses and concurrency.
+/// </summary>
 [TestClass]
 public class HttpClientBaseEdgeCaseTests
 {
@@ -26,6 +30,10 @@ public class HttpClientBaseEdgeCaseTests
     public void Constructor_RejectsNullOptionsWrapper()
         => Assert.ThrowsExactly<ArgumentNullException>(() => new ThrowingClient(null!));
 
+    /// <summary>
+    /// The classification of an <see cref="OperationCanceledException"/> as "timeout" or "cancelled by the caller" depends on the caller's token,
+    /// not on whether retries happen to be enabled.
+    /// </summary>
     [TestMethod]
     public async Task CallerCancellation_IsNeverReportedAsATimeout_EvenWhenNothingWouldBeRetried()
     {
@@ -50,6 +58,9 @@ public class HttpClientBaseEdgeCaseTests
         await Assert.ThrowsAsync<OperationCanceledException>(() => client.Get<Widget>("widgets", ct: cts.Token));
     }
 
+    /// <summary>
+    /// <see cref="Timeout.InfiniteTimeSpan"/> and zero both mean "no attempt timeout": the call is then bounded only by the caller's token.
+    /// </summary>
     [TestMethod]
     public async Task InfiniteRequestTimeout_DisablesTheAttemptTimeout()
     {
@@ -68,6 +79,9 @@ public class HttpClientBaseEdgeCaseTests
         Assert.IsTrue((await client.Get<Widget>("widgets")).IsSuccess);
     }
 
+    /// <summary>
+    /// A failing credential provider must fail the call loudly, never degrade to an anonymous request.
+    /// </summary>
     [TestMethod]
     public async Task ATokenFactoryThatThrows_PropagatesAndSendsNothing()
     {
@@ -91,6 +105,10 @@ public class HttpClientBaseEdgeCaseTests
         Assert.IsEmpty(handler.Requests);
     }
 
+    /// <summary>
+    /// Timing test: the exponential backoff with the test settings would be about 1 ms, so an elapsed time close to one second proves that the
+    /// <c>Retry-After</c> value was used. The threshold leaves 100 ms of tolerance for timer granularity.
+    /// </summary>
     [TestMethod]
     public async Task RetryAfterInSeconds_IsActuallyWaitedFor()
     {
@@ -130,6 +148,10 @@ public class HttpClientBaseEdgeCaseTests
         Assert.HasCount(2, handler.Requests);
     }
 
+    /// <summary>
+    /// 100 simultaneous calls through one shared <see cref="HttpClient"/>: each must carry its own freshly computed token, which would not
+    /// hold if headers were stored on the client or on shared mutable state.
+    /// </summary>
     [TestMethod]
     public async Task ConcurrentCalls_OnASharedFactoryClient_DoNotInterfere()
     {
