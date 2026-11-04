@@ -20,11 +20,19 @@ designed against, and the tests that pin each defence, are listed in the [Securi
 Out of scope, and the application's responsibility:
 
 - **Which hosts are legitimate.** The client only enforces the list you give it (`BaseUri`, `GraphQLUri`, `TrustedOrigins`).
-- **The handler pipeline.** Redirect following, proxies, certificate validation and TLS settings belong to the `HttpMessageHandler` you configure.
-  The library cannot disable automatic redirects on a client it did not create: see "Redirects" in the README.
+- **The handler pipeline.** Proxies, certificate validation and TLS settings belong to the `HttpMessageHandler` you configure. So does *automatic* redirect following:
+  the library follows redirects itself, safely, but cannot disable the handler's own on a client it did not create (`AddSFerrandHttpClient` and `SimpleHttpClientFactory` do).
+  See "Redirects" in the README.
 - **Authentication flows and token storage.** You provide the token; keep it out of source control and logs.
 - **Trust in the content of a response.** A response from a trusted origin is still data: validate it before acting on it.
 - **Availability.** Retries are bounded and honour `Retry-After` up to a maximum, but the client is not a rate limiter or a circuit breaker.
+
+## Reviewed since
+
+The features added after the first release candidate were reviewed with the same questions: where does this value come from, who can influence it, what does it reach?
+Pagination links and redirect targets are server-controlled and go through the same origin, scheme, credential and downgrade checks as any call; multipart names, which the
+framework writes unescaped, are validated; a problem document is parsed without the serializer and its raw body kept out of exception messages; telemetry and logs carry
+addresses without their query string; the redirect and download engines never replay a body to another origin or write the same bytes twice.
 
 ## History
 

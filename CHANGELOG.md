@@ -25,4 +25,14 @@ First version.
   values are validated (line breaks, control characters, headers owned by the HTTP stack); `.`/`..` segments, fragments and embedded credentials are refused in addresses; responses are limited by
   `MaxResponseBytes` (`HttpResponseTooLargeException`); nothing secret in logs or messages. See `SECURITY.md`.
 - `SimpleHttpClientFactory` creates clients that do not follow redirects.
+- Redirects followed by the client itself, hop by hop (`MaxRedirects`): every target checked like a call, credentials stop at the first change of origin.
+- `TotalTimeout`: an overall deadline for a call, retries and waits included. `Accept: application/json` by default.
+- `Retry.IdempotencyKeyHeader`: `POST` and `PATCH` carry a key, the same on every attempt, and become safe to retry.
+- Typed errors: `ProblemDetails` (RFC 9457), `HttpResult.Problem`, `ApiException`, `EnsureSuccess()`. GraphQL: `GraphQLResponse<T>`, `GraphQLError`, `GraphQLException`, `QueryGraphQLAsync`.
+- Pagination: `GetPagesAsync` and `ListAllAsync` as `IAsyncEnumerable` (`Link` header, page numbers, or a cursor from the body).
+- `PostFormAsync`, `PostMultipartAsync` (`MultipartForm`), and `DownloadAsync` (bounded streaming, `MaxDownloadBytes`, `DownloadInterruptedException`).
+- Telemetry under the name `SFerrand.Http`: a span per logical call and three metrics; log messages generated at compile time.
+- `AddSFerrandHttpClient<TClient>`: per-client options, a handler that does not follow redirects, options validated at start-up (`HttpClientOptionsValidator`).
+- Trimmable and AOT-compatible: JSON metadata comes from `JsonTypeInfo`, so a source-generated context is enough.
+- `SFerrand.Http.Testing`: a scripted, recording `HttpMessageHandler` (`StubHandler`) as a separate package.
 - Targets `net8.0` and `net10.0`; XML documentation shipped with the package.

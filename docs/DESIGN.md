@@ -138,11 +138,80 @@ wrong one (it must be killed). A first pass, with a harness that parsed the (loc
 among them a comparison of origins that forgot the scheme (so the token could follow a downgrade from `https` to `http` on the same port) and a size test that also passed when the whole body was read before
 being refused. All are now covered. One mutant survives by design: the log line would still be safe if it printed user info, because user info is refused earlier (defence in depth, equivalent behaviour).
 
+## Features added after the first review
+
+Each of these follows from something the review taught, or from a need the first version could not meet. They were built the same way as the fixes: tests first, then a
+hand-made mutation pass to see whether the tests notice the guard being removed.
+
+A pass of 149 mutations on this code (limits, hop rules, credentials, retries and keys, total timeout, pagination, `Link` parsing, problem documents, bodies, option validation, registration), then 18 on the
+test double, was run with the same harness. The first run left 36 mutants alive or not compiling (a mutation that does not build proves nothing, so those were rewritten in a form that builds). The real gaps were
+filled with tests; the rest were either simplified away or are equivalent:
+
+- *a redirect to another scheme is not checked*: the origin check refuses it first;
+- *a new idempotency key for each attempt*: the key is computed once, outside the attempt loop, so the mutant is the same program;
+- *a zero total timeout is armed*: zero is refused when the options are validated, so the engine never sees it;
+- *`TryAdd` instead of replace for the content headers of the recorded request* (test double): a content header never has the name of a request header;
+- three mutants showed dead or redundant code, which was removed instead of tested: a test for `Timeout.InfiniteTimeSpan` that `<= TimeSpan.Zero` already covers, a fixed multipart boundary (the framework already
+  draws a new random one for each instance), and a second "is it an object" test in the problem-document parser after the leading `{` had been checked.
+
+### Redirects are followed by the client
+
+The framework follows redirects behind the caller's back and keeps every custom header across origins (measured: only `Authorization` is dropped). The client cannot
+switch that off on a handler it does not own, so it does the following itself and asks for a handler that does not (`AddSFerrandHttpClient` and `SimpleHttpClientFactory`
+set it). Each hop is checked like a call, and **credentials stop at the first change of origin, for good**: coming back to the first origin later in the chain does not
+bring them back. The method rules are the browsers' (a 303 is a `GET`; a 301 or 302 turns a `POST` into a `GET`; a 307 or 308 keeps method and body), with one addition:
+a body is never re-sent to another origin, the redirect is returned instead. The rule applied at the end remains: whatever the handler did, an answer from an undeclared
+origin is not returned.
+
+### One engine, several kinds of call
+
+`SendAsync`, forms, multipart and downloads all go through one private engine, which owns retries, redirects, timeouts, telemetry and logging. The kind of call only decides
+the body (bytes plus a media type, built **once** so every attempt sends the same ones) and how the response is read. Pagination is built on `GetAsync`, so overriding it
+still applies.
+
+### The body is read after the headers, and that changes what a retry means
+
+Reading the body under the attempt's timeout, in chunks, is what makes the size limit and the streamed download possible. It has a consequence found while testing: a
+connection dropped in the middle of the body used to surface as an `HttpRequestException` (the framework buffered the body inside `SendAsync`) and now surfaces as an
+`IOException`. The engine treats it as the same transient failure, and reports it as an `HttpRequestException` when attempts run out, so callers see no difference. Checked
+on a real connection, since the exact type depends on the framework. A download that has already written bytes is the exception: replaying would corrupt the destination,
+so it raises `DownloadInterruptedException`, which the engine never retries.
+
+### Idempotency keys instead of "retry POST and hope"
+
+`RetryNonIdempotentMethods` is a blunt tool. With an idempotency key, the **same** key travels on every attempt of a call and a server that honours it can recognize the
+replay. The key is generated once per call, a key supplied by the caller wins and also makes the call retryable, and the feature is off by default because a server that
+ignores the header would execute the replay.
+
+### Errors, GraphQL and pagination read what the server says without trusting it
+
+`ProblemDetails` is parsed with `JsonDocument` (so it is AOT-safe, never throws, and rejects a deeply nested document), and a JSON error of another shape is not mistaken for
+one. `ApiException` keeps the raw body on a property and **out of its message**. A GraphQL `200` carrying `errors` is a result with errors, surfaced by `EnsureNoErrors()`.
+In pagination the next address comes from the server: it gets the same checks as any call, a loop is detected, and hitting the page limit throws rather than truncating.
+
+### Telemetry records addresses without their query
+
+Spans and metrics use the same safe form of an address as the logs. A span covers the logical call; the framework's own spans for each request are its children.
+Metric names are the library's own (`sferrand.http.client.*`) so they cannot be confused with the framework's per-request `http.client.*` metrics.
+
+### Trimming and native AOT
+
+The only reflective call was in the JSON handling. Metadata now comes from `JsonTypeInfo`, resolved from the options; reflection is used only when the application allows it
+(`JsonSerializer.IsReflectionEnabledByDefault`, a feature switch the trimmer understands). A type the supplied context does not know is refused rather than read by reflection, and a
+missing resolver is explained. One real-world detail: `ListAsync<T>` reads an `IEnumerable<T>`, which the context must declare.
+
+### Options are validated once, in one place
+
+The same rules run when a client is built (which throws) and through `IValidateOptions` (which lets the host refuse to start). Messages report every problem and never more
+than scheme, host and port of an address.
+
 ## Trade-offs and known limits
 
 - `DeleteAsync` returns only a `bool`; use `SendAsync` when you need the status or error body.
 - Pagination is not followed; `ListAsync` deserializes one JSON array.
 - Per-attempt timeouts mean the worst-case duration of a call is roughly
   `(MaxRetries + 1) × RequestTimeout + Σ delays`; budget accordingly or use the caller's `CancellationToken` as an overall deadline.
-- Redirects are not followed by the client (see "Security decisions"), so a 3xx is a result. Following them safely, hop by hop, is future work.
+- Redirects are followed by the client only if the handler does not follow them itself (see "Redirects" above); a handler that does gives the leak back, and the client can only refuse the answer.
+- Multipart bodies and idempotency-keyed bodies are held in memory so that they can be replayed; very large uploads should use an `HttpClient` directly.
+- The retry policy is a simple one. For circuit breaking, hedging or rate limiting, compose with `Microsoft.Extensions.Http.Resilience` (`AddSFerrandHttpClient` returns the builder); mind not to stack two retry layers.
 - GraphQL errors typically come back as `200 OK` with an `errors` array: inspect your envelope type, not only `IsSuccess`.

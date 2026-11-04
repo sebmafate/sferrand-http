@@ -17,7 +17,7 @@ dotnet test                        # both target frameworks
 dotnet test -f net10.0             # one target framework
 dotnet test --filter TestCategory=Integration      # only the tests using a real local HTTP server
 dotnet test --filter "TestCategory!=Integration"   # everything else (instant, no sockets)
-dotnet pack src/SFerrand.Http -c Release -o artifacts
+dotnet pack -c Release -o artifacts          # SFerrand.Http and SFerrand.Http.Testing
 ```
 
 ### Coverage
@@ -27,9 +27,9 @@ dotnet test -f net10.0 --collect:"XPlat Code Coverage" --results-directory /tmp/
 grep -o '<coverage line-rate="[^"]*" branch-rate="[^"]*"' /tmp/cov/*/coverage.cobertura.xml
 ```
 
-Reference values at 1.0.0: **100 % of lines, about 97 % of branches**. The uncovered branches are defensive fallbacks the
-test host cannot reach: the user agent when the process has no entry assembly, and a `Retry-After` header carrying neither a
-delay nor a date. A change should not lower either number without a reason stated in the pull request.
+Reference values at 1.0.0: **about 99 % of lines, about 97 % of branches**. What is left is defensive code the test host cannot reach:
+the user agent when the process has no entry assembly, a `Retry-After` header carrying neither a delay nor a date, the "reflection is turned off"
+branch of the JSON setup (covered instead by the trimmed-application check described in the README), and a few auto-property accessors. A change should not lower either number without a reason stated in the pull request.
 Coverage is a floor, not a goal: see "Mutation check" below for what it cannot tell you.
 
 ## What a change must contain
@@ -53,6 +53,9 @@ Coverage is a floor, not a goal: see "Mutation check" below for what it cannot t
 - Never log a query string, a body or a credential, and never put one in an exception message: describe an address with `RequestUri.Describe` (scheme, host, port).
 - Anything that reaches the wire from outside the application (a header, a path segment, an address) is validated first. Do not add a header without `SetHeader`, and do not bypass the trusted-origin
   check. A change touching these needs a regression test that fails without it, in `SecurityTests`.
+- Trim and AOT: the analyzers run on every build and a warning is an error. Do not add reflection (`JsonSerializer.Serialize<T>(value, options)`, `Activator`,
+  `Type.GetType`...): get JSON metadata through `JsonMetadata`, which goes through `JsonTypeInfo`.
+- The engine in `HttpClientBase.Core.cs` is the only place that sends a request. A new kind of call is a new way to build the body and to read the response, not a second engine.
 - Keep the dependency list short; a new package needs a justification in the pull request.
 
 ## Mutation check (manual)

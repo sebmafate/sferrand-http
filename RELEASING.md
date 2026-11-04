@@ -3,6 +3,11 @@
 How a version of `SFerrand.Http` is numbered, built and published. Everything is driven by **git tags**: there is no version number
 to edit in a project file.
 
+## Two packages, one version
+
+The repository publishes `SFerrand.Http` and `SFerrand.Http.Testing`. Both take their version from the same tag, `dotnet pack` at the root builds both, and the release
+workflow checks that **both** files named after the tag exist before pushing anything.
+
 ## How versions work
 
 - The version comes from the latest tag `vMAJOR.MINOR.PATCH` reachable from the commit being built, computed by
@@ -75,18 +80,18 @@ dotnet add package SFerrand.Http
 ## Trying a package locally before releasing
 
 ```bash
-dotnet pack src/SFerrand.Http -c Release -o artifacts          # artifacts/SFerrand.Http.<version>.nupkg
+dotnet pack -c Release -o artifacts          # artifacts/SFerrand.Http.<version>.nupkg and SFerrand.Http.Testing.<version>.nupkg
 dotnet nuget add source "$PWD/artifacts" --name local-sferrand
 # in a test project:  dotnet add package SFerrand.Http --version <version> --source local-sferrand
 dotnet nuget remove source local-sferrand              # when done
 ```
 
-The version of a local pack is the pre-release one (see above). Remove the package from `~/.nuget/packages/sferrand.http`
+The version of a local pack is the pre-release one (see above). Remove the packages from `~/.nuget/packages/sferrand.http` and `sferrand.http.testing`
 afterwards, otherwise a later restore of the *same version number* silently reuses your local build.
 
 ## After the first release
 
-Set the published version as the API-compatibility baseline in `src/SFerrand.Http/SFerrand.Http.csproj`:
+Set the published version as the API-compatibility baseline in `src/SFerrand.Http/SFerrand.Http.csproj` (and in `src/SFerrand.Http.Testing/SFerrand.Http.Testing.csproj`):
 
 ```xml
 <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion>
