@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using SFerrand.Http.Tests.Support;
+using SFerrand.Http.Testing;
 
 namespace SFerrand.Http.Tests;
 

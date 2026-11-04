@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net;
 using SFerrand.Http.Tests.Support;
+using SFerrand.Http.Testing;
 
 namespace SFerrand.Http.Tests;
 

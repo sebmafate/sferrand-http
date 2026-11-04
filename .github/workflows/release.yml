@@ -31,12 +31,14 @@ jobs:
       - run: dotnet restore
       - run: dotnet build --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
       - run: dotnet test --configuration Release --no-build
-      - run: dotnet pack src/SFerrand.Http --configuration Release --no-build --output artifacts
+      - run: dotnet pack --configuration Release --no-build --output artifacts
 
       - name: Check the package version matches the tag
         shell: bash
         run: |
-          test -f "artifacts/SFerrand.Http.${VERSION}.nupkg" || { echo "::error::expected artifacts/SFerrand.Http.${VERSION}.nupkg, got:"; ls artifacts; exit 1; }
+          for package in SFerrand.Http SFerrand.Http.Testing; do
+            test -f "artifacts/${package}.${VERSION}.nupkg" || { echo "::error::expected artifacts/${package}.${VERSION}.nupkg, got:"; ls artifacts; exit 1; }
+          done
 
       - uses: actions/upload-artifact@v4
         with:

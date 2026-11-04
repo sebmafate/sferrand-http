@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SFerrand.Http\SFerrand.Http.csproj" />
+    <ProjectReference Include="..\..\src\SFerrand.Http.Testing\SFerrand.Http.Testing.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>SFerrand.Http.Testing</RootNamespace>
+
+    <PackageId>SFerrand.Http.Testing</PackageId>
+    <!-- Versioned from the same git tag as SFerrand.Http (MinVer): see RELEASING.md. -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <MinVerDefaultPreReleaseIdentifiers>preview.0</MinVerDefaultPreReleaseIdentifiers>
+    <Authors>Sébastien Ferrand</Authors>
+    <Copyright>Copyright (c) 2026 Sébastien Ferrand</Copyright>
+    <PackageProjectUrl>https://git.vbmaf.net/sebastien/sferrand-http</PackageProjectUrl>
+    <RepositoryUrl>https://git.vbmaf.net/sebastien/sferrand-http.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
+    <Description>Test helpers for HttpClient-based code: a scripted, recording HttpMessageHandler (responses, transport failures, hangs) to test typed API clients, such as those built on SFerrand.Http, end to end without a network.</Description>
+    <PackageTags>http;httpclient;testing;test-double;stub;mock;httpmessagehandler</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EnablePackageValidation>true</EnablePackageValidation>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.Gitea" Version="10.0.403">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.403">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="MinVer" Version="8.0.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!-- Source links in the symbols: two providers are referenced, so the generic Forgejo/Gitea one must be told which host is its own. -->
+  <ItemGroup>
+    <SourceLinkGiteaHost Include="git.vbmaf.net" />
+  </ItemGroup>
+
+</Project>

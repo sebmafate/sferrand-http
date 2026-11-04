@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using SFerrand.Http.Testing;
 
 namespace SFerrand.Http.Tests.Support;
 

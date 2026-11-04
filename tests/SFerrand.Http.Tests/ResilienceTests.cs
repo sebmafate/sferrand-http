@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using SFerrand.Http.Tests.Support;
+using SFerrand.Http.Testing;
 
 namespace SFerrand.Http.Tests;
 
