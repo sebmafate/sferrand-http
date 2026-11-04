@@ -72,6 +72,25 @@ public class HttpClientOptions
     /// </summary>
     public Version? HttpVersion { get; set; }
 
+    /// <summary>
+    /// Origins (<c>https://host[:port]</c>) other than <see cref="BaseUri"/> and <see cref="GraphQLUri"/> that this client may talk to.
+    /// A request to any other origin is refused before it is sent: credentials and default headers are never sent to an address the
+    /// application did not declare, whatever a resource path or a per-call <c>baseUri</c> says.
+    /// </summary>
+    public ISet<string> TrustedOrigins { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Allows plain <c>http://</c> to hosts other than the loopback interface. Default: <see langword="false"/>, so tokens and headers
+    /// cannot travel in clear text by accident. <c>http://localhost</c>, <c>127.0.0.1</c> and <c>[::1]</c> are always allowed.
+    /// </summary>
+    public bool AllowInsecureHttp { get; set; }
+
+    /// <summary>
+    /// Largest response body accepted, in bytes. A larger body, announced by <c>Content-Length</c> or discovered while reading,
+    /// raises <see cref="HttpResponseTooLargeException"/> without being buffered. <see langword="null"/> removes the limit. Default: 64 MiB.
+    /// </summary>
+    public long? MaxResponseBytes { get; set; } = 64L * 1024 * 1024;
+
     /// <summary>Retry policy.</summary>
     public RetryOptions Retry { get; } = new();
 }

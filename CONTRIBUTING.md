@@ -50,7 +50,9 @@ Coverage is a floor, not a goal: see "Mutation check" below for what it cannot t
 - Async all the way: never block on a task (`.Result`, `.Wait()`), always pass the `CancellationToken` down,
   `ConfigureAwait(false)` in library code.
 - No state on the shared `HttpClient`: everything per request.
-- Never log a query string, a body or a credential.
+- Never log a query string, a body or a credential, and never put one in an exception message: describe an address with `RequestUri.Describe` (scheme, host, port).
+- Anything that reaches the wire from outside the application (a header, a path segment, an address) is validated first. Do not add a header without `SetHeader`, and do not bypass the trusted-origin
+  check. A change touching these needs a regression test that fails without it, in `SecurityTests`.
 - Keep the dependency list short; a new package needs a justification in the pull request.
 
 ## Mutation check (manual)
@@ -60,9 +62,11 @@ the code on purpose in a scratch copy and make sure a test goes red:
 
 - invert a condition (`attempt < maxAttempts` to `<=`), drop a guard, change a status code in the retry set;
 - remove the encoding of a query parameter, leak a token into a log message;
+- remove one of the security guards (trusted origin, clear-text check, header validation, dot segments, size limit) or widen one of their lists;
 - make the retry wait ignore the cancellation token.
 
-A mutation that survives means a missing or weak test: add one. Two weak tests were found and fixed this way before 1.0.0
+**Classify by the exit code of `dotnet test`, never by parsing its (localized) output**, and validate the harness with a mutation that must survive and one that must not: a harness that parses text once
+reported every mutant as killed. A mutation that survives means a missing or weak test: add one (or explain why the mutant is equivalent). Two weak tests were found and fixed this way before 1.0.0
 (cancellation versus timeout on a `POST`, and the encoding of query parameter *names*).
 
 ## Releases

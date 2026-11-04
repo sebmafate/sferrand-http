@@ -9,6 +9,11 @@ namespace SFerrand.Http;
 /// <remarks>
 /// In an ASP.NET Core or Generic Host application, prefer <c>services.AddHttpClient()</c>.
 /// Clients are shared: do not change their <see cref="HttpClient.BaseAddress"/> or default headers.
+/// <para>
+/// Without a custom handler the clients <b>do not follow redirects</b>. When the HTTP stack follows a redirect to another origin it keeps every
+/// custom header (<c>X-Api-Key</c>, <c>Cookie</c>...) and drops only <c>Authorization</c>, so a redirect would hand your API key to whoever
+/// the server pointed at. A 3xx is returned to the caller as an ordinary result. See the README for the same setting with <c>AddHttpClient</c>.
+/// </para>
 /// </remarks>
 public sealed class SimpleHttpClientFactory : IHttpClientFactory, IDisposable
 {
@@ -24,7 +29,7 @@ public sealed class SimpleHttpClientFactory : IHttpClientFactory, IDisposable
 
     /// <inheritdoc />
     public HttpClient CreateClient(string name)
-        => _clients.GetOrAdd(name ?? string.Empty, _ => _handler is null ? new HttpClient() : new HttpClient(_handler, disposeHandler: false));
+        => _clients.GetOrAdd(name ?? string.Empty, _ => _handler is null ? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) : new HttpClient(_handler, disposeHandler: false));
 
     /// <summary>Disposes every client created so far. The custom handler, if any, is left to its owner.</summary>
     public void Dispose()

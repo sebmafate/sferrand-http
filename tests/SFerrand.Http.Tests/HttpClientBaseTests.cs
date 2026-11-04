@@ -68,11 +68,12 @@ public class HttpClientBaseTests
         Assert.IsNull(handler.Requests.Single().Body);
     }
 
+    /// <summary>A per-call base address can target another host, but only one that the application declared as trusted (see <see cref="SecurityTests"/>).</summary>
     [TestMethod]
-    public async Task Get_WithBaseUriOverride_TargetsAnotherHost()
+    public async Task Get_WithBaseUriOverride_TargetsAnotherDeclaredHost()
     {
         var handler = new StubHandler().Respond(HttpStatusCode.OK, WidgetJson);
-        var client = TestClients.Create(handler);
+        var client = TestClients.Create(handler, o => o.TrustedOrigins.Add("https://uploads.test"));
 
         await client.Get<Widget>("uploads", baseUri: "https://uploads.test");
 
@@ -257,10 +258,10 @@ public class HttpClientBaseTests
     }
 
     [TestMethod]
-    public async Task GraphQL_EndpointCanBeGivenPerCall()
+    public async Task GraphQL_EndpointCanBeGivenPerCall_WhenItsOriginIsDeclared()
     {
         var handler = new StubHandler().Respond(HttpStatusCode.OK, "{}");
-        var client = TestClients.Create(handler);
+        var client = TestClients.Create(handler, o => o.TrustedOrigins.Add("https://other.test"));
 
         await client.GraphQL<JsonElement, object>(new GraphQLQuery<object> { Query = "{a}" }, "https://other.test/gql");
 

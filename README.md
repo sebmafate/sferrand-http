@@ -14,6 +14,7 @@ dotnet add package SFerrand.Http
 - **Safe with a shared `HttpClient`**: auth and headers are set on each request, never on `DefaultRequestHeaders`,
   so nothing accumulates and tokens can be refreshed on every call.
 - **Predictable URLs**: no `BaseAddress` surprises; the resource is always appended to the base.
+- **Secure by default**: calls only go to declared origins, no clear text, no header injection, no path traversal, bounded responses (see [Security](#security)).
 - **Small surface, few dependencies**: only `Microsoft.Extensions.{Http,Options,Logging.Abstractions}`.
 
 ## Quick start
@@ -45,9 +46,11 @@ public sealed class WidgetsClient : HttpClientBase
 Registration (works with any `IHttpClientFactory`; `AddHttpClient` gives you pooling and handler lifetime):
 
 ```csharp
-services.AddHttpClient();
+services.AddHttpClient("api")   // no automatic redirects: see "Security"
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 services.Configure<HttpClientOptions>(o =>
 {
+    o.HttpClientName = "api";
     o.BaseUri = "https://api.example.com/v2";
     o.TokenFactory = () => tokenProvider.CurrentToken;   // evaluated for every request
     o.Headers["X-Client"] = () => "my-app";
@@ -81,7 +84,7 @@ else
 | `SendGraphQLAsync<T, TVariables>(query, headers?, graphQLUri?, ct)` | POST | endpoint from `GraphQLUri` |
 | `SendAsync<T>(method, resource, id, parameters, body, headers, baseUri, ct)` | any | the primitive behind all of the above |
 
-`headers` replace same-named default headers for that call only; `baseUri` redirects a single call to another host.
+`headers` replace same-named default headers for that call only; `baseUri` redirects a single call to another host, **provided its origin is declared** (see [Security](#security)).
 A protected constructor `HttpClientBase(HttpClientBase other)` lets several focused clients share one configuration.
 
 ## URL building
@@ -95,7 +98,43 @@ The resource is **always appended** to the base address, whatever the slashes at
 | `https://api.test/v1` | `repos` | `owner/name` | `https://api.test/v1/repos/owner/name` (each segment is encoded) |
 | `https://api.test/v1` | `search` | | `…/search?q=a%20b&page=2` with `parameters` (encoded, in order) |
 
-An absolute resource URL (`https://other.test/x`) replaces the base.
+An absolute resource URL replaces the base only when it is on the **same origin** (or a declared trusted one). Any other origin is refused before anything is sent, so a resource that comes from a user cannot make the client call, with your token, an address you never configured.
+
+## Security
+
+The client is meant to be used with values that partly come from outside (an identifier typed by a user, a URL found in a response). These are the rules it enforces; each one is covered by tests, several of which reproduce a real attack.
+
+| Risk | What the client does |
+|---|---|
+| **Credentials sent to the wrong host** (a user-supplied absolute URL, a per-call `baseUri`) | Only origins in `BaseUri`, `GraphQLUri` and `TrustedOrigins` can be called. Any other origin raises `ArgumentException` before anything is sent. |
+| **Clear text** | `http://` is refused, except on `localhost`, `127.0.0.1` and `[::1]`, unless `AllowInsecureHttp` is set. Misconfiguration is detected when the client is built. |
+| **Header injection** | Header values (default, per call, token, user agent) containing a line break or another control character are refused, as are invalid header names. The values are added without the framework's validation, which does **not** reject a line break: on a real connection `"ok\r\nX-Injected: 1"` arrived at the server as a second header. |
+| **Request smuggling** | `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`, `TE`, `Trailer`, `Keep-Alive` and `Proxy-Connection` cannot be set. |
+| **Path traversal** | `.` and `..` segments (also as `%2e`, or with `\`) in a resource or an identifier are refused: `Uri` would silently resolve them and reach another endpoint with your credentials. A fragment in a resource is refused. Other characters of an identifier are encoded. |
+| **Secrets in logs and messages** | Logs hold scheme, host and path only (never the query or user info), and error messages never repeat an address or a header value. Credentials embedded in an address (`user:pw@host`) are refused. |
+| **Memory exhaustion** | A body larger than `MaxResponseBytes` (default 64 MiB) raises `HttpResponseTooLargeException` as soon as it is known or crossed, without being buffered whole, and is not retried. The timeout of an attempt covers the reading of the body. |
+| **Redirects** | See below. |
+
+### Redirects
+
+When the HTTP stack follows a redirect to **another origin**, it drops the `Authorization` header but **keeps every other header** (`X-Api-Key`, `Cookie`...): a redirect can hand your API key to whoever the server points at. The client cannot switch this off on a client it did not create, so:
+
+- `SimpleHttpClientFactory` creates clients that **do not follow redirects** (a 3xx is returned as a result);
+- with `AddHttpClient`, do the same, unless you really need redirects:
+
+```csharp
+services.AddHttpClient("api")
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+// and in the options: o.HttpClientName = "api";
+```
+
+- whatever the handler does, a response that comes from an origin you did not declare is never returned: `InvalidOperationException`. This protects against a forged answer, but not against the leak itself, which has already happened by then.
+
+Declare the extra hosts you really talk to (a file server, a CDN) explicitly:
+
+```csharp
+o.TrustedOrigins.Add("https://uploads.example.com");
+```
 
 ## Retries and timeouts
 
@@ -143,6 +182,7 @@ The [test suite](tests/SFerrand.Http.Tests) contains a ready-made recording stub
 ## Documentation
 
 - **API reference**: every public and protected member is documented with XML comments (shipped in the package, so IntelliSense shows them).
+- [Security policy](SECURITY.md) and the [Security](#security) section above.
 - [Design notes](docs/DESIGN.md): why it works this way, what was rejected, known limits.
 - [Test suite](tests/README.md): strategy, conventions, timing-sensitive tests.
 - [Contributing](CONTRIBUTING.md), [Changelog](CHANGELOG.md) and [Releasing](RELEASING.md) (versioning and publication of the NuGet package).

@@ -1,6 +1,6 @@
 # Test suite
 
-139 tests, MSTest 4, run on `net8.0` and `net10.0`. No test needs the Internet. This page explains how the suite is organized
+228 tests, MSTest 4, run on `net8.0` and `net10.0`. No test needs the Internet. This page explains how the suite is organized
 and how to add to it; how to run it is in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Strategy
@@ -10,10 +10,17 @@ and how to add to it; how to run it is in [CONTRIBUTING.md](../CONTRIBUTING.md).
 | Pure logic | `RetryOptionsTests`, `RequestUriTests` | Backoff maths, jitter bounds, `Retry-After`, URL building and encoding. Randomness and clock are injected, so results are exact. | instant |
 | Value object | `HttpResultTests` | Deserialization rules, error results, synthetic results. | instant |
 | Behaviour through a stub | `HttpClientBaseTests`, `HttpClientBaseEdgeCaseTests`, `SimpleHttpClientFactoryTests` | The whole request pipeline (headers, auth, retries, timeouts, cancellation, logging) against a recording `HttpMessageHandler`. | instant to ~1 s |
-| Real network stack | `IntegrationTests` (`[TestCategory("Integration")]`) | What a stub cannot reproduce: real header validation, real sockets, refused connections, concurrency on one pooled `HttpClient`. A loopback `HttpListener` on a free port. | ~1 s |
+| Security regressions | `SecurityTests` | Each way the client could leak a credential, reach an address it was not configured for, forge a header, climb a path, log a secret or exhaust memory. Written **before** the fixes: they failed on the code that did not have them (50 of 69 cases). | instant |
+| Real network stack | `IntegrationTests` (`[TestCategory("Integration")]`) | What a stub cannot reproduce: real header validation, real sockets, refused connections, concurrency on one pooled `HttpClient`, **a line break in a header on the wire, cross-origin redirects, an endless body, a stalled body**. A loopback `HttpListener` on a free port. | ~2 s |
 
 The stub tests make up most of the suite because they are deterministic. The integration tests are few on purpose: each
 one covers something the stub would silently get wrong.
+
+## Security tests
+
+`SecurityTests` is organized by threat (trusted origins, clear text, secrets in addresses/messages/logs, header forging, path traversal, memory). The convention: **a security fix starts with a test that fails for the right reason**, and
+when the behaviour depends on the framework, the claim is first checked on a real connection (the integration tests) rather than assumed. Two of the original findings were not what I expected: a line break in a header value *is*
+sent as a second header, and a cross-origin redirect *keeps* custom headers while dropping `Authorization`.
 
 ## Support code (`Support/`)
 

@@ -1,35 +1,47 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 
 namespace SFerrand.Http.Internal;
 
 /// <summary>
-/// Builds request URIs from a base address, a resource path, an optional identifier and query parameters.
+/// Builds request URIs from a base address, a resource path, an optional identifier and query parameters, and refuses the shapes that
+/// let a caller-controlled string reach somewhere else than intended.
 /// </summary>
 internal static class RequestUri
 {
     /// <summary>
     /// <list type="bullet">
     /// <item>The resource path is always appended to the base address, whatever the slashes at the junction.</item>
-    /// <item>An absolute <paramref name="resourceUri"/> replaces the base address.</item>
+    /// <item>An absolute <paramref name="resourceUri"/> replaces the base address (the caller decides whether that origin is acceptable).</item>
     /// <item><paramref name="id"/> becomes an extra path segment; a <c>/</c> inside it separates segments, each one URL-encoded.</item>
     /// <item>Query parameters are URL-encoded and added after any query already present in the resource.</item>
     /// </list>
+    /// Refused with an <see cref="ArgumentException"/> that never repeats the offending value (it may be a secret): credentials embedded
+    /// in an address, a fragment in the resource, and <c>.</c> or <c>..</c> segments in the resource or the identifier, which <see cref="Uri"/>
+    /// would silently resolve and so climb out of the intended path.
     /// </summary>
     /// <param name="baseUri">Absolute http(s) base address.</param>
     /// <param name="resourceUri">Relative path (or absolute URL) of the resource; may be empty to target the base itself.</param>
     /// <param name="id">Optional identifier appended as path segment(s).</param>
     /// <param name="parameters">Optional query parameters, appended in order.</param>
-    /// <exception cref="ArgumentException"><paramref name="baseUri"/> is not an absolute http(s) address.</exception>
+    /// <exception cref="ArgumentException">An argument has one of the shapes listed above, or <paramref name="baseUri"/> is not an absolute http(s) address.</exception>
     public static Uri Build(string baseUri, string resourceUri, string? id = null, IEnumerable<KeyValuePair<string, string>>? parameters = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUri);
         ArgumentNullException.ThrowIfNull(resourceUri);
 
         // IsAbsoluteHttp, not just "absolute": on Unix "/v1" parses as the file URI file:///v1.
-        if (!IsAbsoluteHttp(baseUri))
-            throw new ArgumentException($"'{baseUri}' is not an absolute http(s) URI.", nameof(baseUri));
+        if (!TryParseHttp(baseUri, out var parsedBase))
+            throw new ArgumentException($"The base address is not an absolute http(s) URI ({Describe(baseUri)}).", nameof(baseUri));
+        RejectCredentials(parsedBase, nameof(baseUri));
 
-        var raw = IsAbsoluteHttp(resourceUri)
+        if (resourceUri.Contains('#', StringComparison.Ordinal))
+            throw new ArgumentException("The resource must not contain a fragment ('#'): a fragment is never sent, and would swallow the identifier and the parameters.", nameof(resourceUri));
+
+        if (TryParseHttp(resourceUri, out var parsedResource))
+            RejectCredentials(parsedResource, nameof(resourceUri));
+
+        var raw = parsedResource is not null
             ? resourceUri
             : resourceUri.Length == 0
                 ? baseUri
@@ -39,8 +51,16 @@ internal static class RequestUri
         var path = queryStart < 0 ? raw : raw[..queryStart];
         var query = queryStart < 0 ? string.Empty : raw[(queryStart + 1)..];
 
+        // Only what the caller supplied is checked (the base address is configuration, and may legitimately contain anything the owner wrote).
+        var suppliedPath = parsedResource is not null ? path : resourceUri.Split('?')[0];
+        if (HasDotSegment(suppliedPath, decodePercentDots: true))
+            throw new ArgumentException("The resource must not contain '.' or '..' segments.", nameof(resourceUri));
+
         if (!string.IsNullOrEmpty(id))
         {
+            if (HasDotSegment(id, decodePercentDots: false))
+                throw new ArgumentException("The identifier must not contain '.' or '..' segments.", nameof(id));
+
             var segments = id.Trim('/').Split('/').Select(Uri.EscapeDataString);
             path = path.TrimEnd('/') + "/" + string.Join('/', segments);
         }
@@ -60,6 +80,50 @@ internal static class RequestUri
         return new Uri(query.Length == 0 ? path : path + "?" + query, UriKind.Absolute);
     }
 
-    private static bool IsAbsoluteHttp(string value)
-        => Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    /// <summary>Parses an absolute http(s) address.</summary>
+    public static bool TryParseHttp(string value, [NotNullWhen(true)] out Uri? uri)
+    {
+        if (Uri.TryCreate(value, UriKind.Absolute, out var parsed) && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps))
+        {
+            uri = parsed;
+            return true;
+        }
+
+        uri = null;
+        return false;
+    }
+
+    /// <summary>
+    /// The origin of an address: scheme, host and port, normalized (case, default ports, internationalized names). Two addresses can send each other
+    /// credentials only when their origins are equal.
+    /// </summary>
+    public static string Origin(Uri uri) => $"{uri.Scheme}://{uri.IdnHost}:{uri.Port}"; // Uri already lower-cases the host
+
+    /// <summary>
+    /// A description of an address that is safe to put in a message or a log: scheme, host and port only. Never the user info, the path or the
+    /// query, which can hold secrets, and nothing at all of a value that is not an address.
+    /// </summary>
+    public static string Describe(string? value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Host.Length > 0
+            ? $"{uri.Scheme}://{uri.Host}" + (uri.IsDefaultPort ? string.Empty : $":{uri.Port}")
+            : "not an absolute URI";
+
+    /// <summary>Credentials in an address (<c>user:password@host</c>) end up in logs and proxies: they have no place there.</summary>
+    public static void RejectCredentials(Uri uri, string parameterName)
+    {
+        if (uri.UserInfo.Length > 0)
+            throw new ArgumentException("An address must not contain credentials (user:password@host): use TokenFactory or a header.", parameterName);
+    }
+
+    private static bool HasDotSegment(string path, bool decodePercentDots)
+    {
+        foreach (var segment in path.Split('/', '\\'))
+        {
+            var candidate = decodePercentDots ? segment.Replace("%2e", ".", StringComparison.OrdinalIgnoreCase) : segment;
+            if (candidate is "." or "..")
+                return true;
+        }
+
+        return false;
+    }
 }

@@ -21,4 +21,8 @@ First version.
 - URL building that always appends the resource to the base address, with encoded identifiers and query parameters.
 - Logging that never includes the query string, request bodies or tokens.
 - `SimpleHttpClientFactory`: a minimal, thread-safe `IHttpClientFactory` with an injectable handler, for tests and tools.
+- Security by default: calls only go to declared origins (`BaseUri`, `GraphQLUri`, `TrustedOrigins`); clear-text `http` is refused except on the loopback interface (`AllowInsecureHttp`); header names and
+  values are validated (line breaks, control characters, headers owned by the HTTP stack); `.`/`..` segments, fragments and embedded credentials are refused in addresses; responses are limited by
+  `MaxResponseBytes` (`HttpResponseTooLargeException`); nothing secret in logs or messages. See `SECURITY.md`.
+- `SimpleHttpClientFactory` creates clients that do not follow redirects.
 - Targets `net8.0` and `net10.0`; XML documentation shipped with the package.

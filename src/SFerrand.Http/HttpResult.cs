@@ -63,16 +63,21 @@ public class HttpResult<TResult>
     /// </summary>
     /// <param name="response">The response.</param>
     /// <param name="options">JSON options used to deserialize a successful body. Default: <see cref="JsonSerializerDefaults.Web"/>.</param>
+    /// <param name="maxContentBytes">Largest body accepted, in bytes. <see langword="null"/> (the default) reads whatever comes.</param>
     /// <param name="cancellationToken">Cancels the body read.</param>
+    /// <exception cref="HttpResponseTooLargeException">The body is larger than <paramref name="maxContentBytes"/>.</exception>
     /// <exception cref="JsonException">A successful body is not valid JSON for <typeparamref name="TResult"/>.</exception>
     public static async Task<HttpResult<TResult>> FromResponseAsync(
         HttpResponseMessage response,
         JsonSerializerOptions? options = null,
+        long? maxContentBytes = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(response);
 
-        var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var content = maxContentBytes is { } limit
+            ? await ReadLimitedAsync(response.Content, limit, cancellationToken).ConfigureAwait(false)
+            : await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         var isSuccess = response.IsSuccessStatusCode;
 
         return new HttpResult<TResult>
@@ -98,6 +103,55 @@ public class HttpResult<TResult>
             Content = result is string text ? text : JsonSerializer.Serialize(result, options ?? new JsonSerializerOptions(JsonSerializerDefaults.Web)),
             Result = result,
         };
+
+    /// <summary>
+    /// Reads a body into a string without ever holding more than <paramref name="limit"/> bytes: a declared length over the limit is refused before
+    /// reading, and a body that turns out larger than it announced (or announced nothing) is cut off as soon as it crosses the limit.
+    /// </summary>
+    private static async Task<string> ReadLimitedAsync(HttpContent content, long limit, CancellationToken cancellationToken)
+    {
+        limit = Math.Min(limit, Array.MaxLength);
+        if (content.Headers.ContentLength is { } declared && declared > limit)
+            throw new HttpResponseTooLargeException(limit);
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var buffer = new MemoryStream();
+        var chunk = System.Buffers.ArrayPool<byte>.Shared.Rent(81_920);
+        try
+        {
+            int read;
+            while ((read = await stream.ReadAsync(chunk.AsMemory(), cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                if (buffer.Length + read > limit)
+                    throw new HttpResponseTooLargeException(limit);
+                buffer.Write(chunk, 0, read);
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(chunk);
+        }
+
+        buffer.Position = 0;
+        using var reader = new StreamReader(buffer, ResolveEncoding(content.Headers.ContentType?.CharSet), detectEncodingFromByteOrderMarks: true);
+        return await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    // An unknown or malformed charset must not fail the call: UTF-8 is what JSON APIs speak.
+    private static System.Text.Encoding ResolveEncoding(string? charset)
+    {
+        if (string.IsNullOrWhiteSpace(charset))
+            return System.Text.Encoding.UTF8;
+
+        try
+        {
+            return System.Text.Encoding.GetEncoding(charset.Trim('"', ' '));
+        }
+        catch (ArgumentException)
+        {
+            return System.Text.Encoding.UTF8;
+        }
+    }
 
     // string: the raw body is the result. Empty body: no result (204, HEAD...). Otherwise JSON; invalid JSON throws JsonException.
     private static TResult? Deserialize(string content, JsonSerializerOptions? options)

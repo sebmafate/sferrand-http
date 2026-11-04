@@ -27,6 +27,8 @@ namespace SFerrand.Http;
 /// <item>HTTP error statuses are returned in an <see cref="HttpResult{TResult}"/>; exceptions are reserved for transport failures,
 /// timeouts (<see cref="TimeoutException"/>), cancellation and unreadable JSON.</item>
 /// <item>Authentication and headers are set on each request, so the underlying <see cref="HttpClient"/> can be shared safely.</item>
+/// <item>Secure by default: requests only go to origins declared in the options, clear-text <c>http</c> is refused (except on the loopback interface),
+/// header values are checked for line breaks, path traversal is refused and response bodies are size-limited. See the README, section "Security".</item>
 /// <item>Transient failures are retried according to <see cref="HttpClientOptions.Retry"/>; only idempotent methods by default.</item>
 /// </list>
 /// </remarks>
@@ -35,6 +37,9 @@ public abstract class HttpClientBase
     private readonly HttpClientOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
+
+    // Origins (scheme://host:port) this client may talk to: the base address, the GraphQL endpoint and the declared trusted origins.
+    private readonly HashSet<string> _trustedOrigins;
 
     // Resolved once at construction: explicit option, else the name of the host application, else the library name.
     private readonly string _userAgent;
@@ -56,11 +61,34 @@ public abstract class HttpClientBase
                      ?? Assembly.GetEntryAssembly()?.GetName().Name
                      ?? "SFerrand.Http";
 
-        if (!Uri.TryCreate(_options.BaseUri, UriKind.Absolute, out var baseUri)
-            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps))
-        {
-            throw new ArgumentException($"{nameof(HttpClientOptions.BaseUri)} must be an absolute http(s) URI, got '{_options.BaseUri}'.", nameof(options));
-        }
+        ValidateHeaderValue(_userAgent, "User-Agent");
+        if (_options.MaxResponseBytes is <= 0)
+            throw new ArgumentException($"{nameof(HttpClientOptions.MaxResponseBytes)} must be positive, or null for no limit.", nameof(options));
+
+        _trustedOrigins = new HashSet<string>(StringComparer.Ordinal) { ValidateAddress(_options.BaseUri, nameof(HttpClientOptions.BaseUri)) };
+        if (!string.IsNullOrEmpty(_options.GraphQLUri))
+            _trustedOrigins.Add(ValidateAddress(_options.GraphQLUri, nameof(HttpClientOptions.GraphQLUri)));
+        foreach (var origin in _options.TrustedOrigins)
+            _trustedOrigins.Add(ValidateAddress(origin, nameof(HttpClientOptions.TrustedOrigins)));
+    }
+
+    /// <summary>
+    /// Checks an address given in the options and returns its origin. Refuses what is not an absolute http(s) address, credentials embedded in it,
+    /// and clear-text http to a host that is not the loopback interface (unless <see cref="HttpClientOptions.AllowInsecureHttp"/> says otherwise).
+    /// Messages never repeat more than scheme, host and port: the value may carry secrets.
+    /// </summary>
+    private string ValidateAddress(string? value, string optionName)
+    {
+        if (value is null || !RequestUri.TryParseHttp(value, out var uri))
+            throw new ArgumentException($"{optionName} must be an absolute http(s) URI ({RequestUri.Describe(value)}).", "options");
+
+        if (uri.UserInfo.Length > 0)
+            throw new ArgumentException($"{optionName} must not contain credentials (user:password@host): use TokenFactory or a header.", "options");
+
+        if (uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback && !_options.AllowInsecureHttp)
+            throw new ArgumentException($"{optionName} uses clear-text http ({RequestUri.Describe(value)}): use https, or set {nameof(HttpClientOptions.AllowInsecureHttp)}.", "options");
+
+        return RequestUri.Origin(uri);
     }
 
     /// <summary>
@@ -75,6 +103,7 @@ public abstract class HttpClientBase
         _httpClientFactory = other._httpClientFactory;
         _logger = other._logger;
         _userAgent = other._userAgent;
+        _trustedOrigins = other._trustedOrigins;
     }
 
     /// <summary>The JSON options used for request bodies and response parsing.</summary>
@@ -93,11 +122,11 @@ public abstract class HttpClientBase
     /// <exception cref="TimeoutException">Every attempt exceeded <see cref="HttpClientOptions.RequestTimeout"/>.</exception>
     /// <exception cref="HttpRequestException">The transport failed on every attempt.</exception>
     /// <exception cref="JsonException">A successful response body could not be deserialized.</exception>
-    /// <param name="resourceUri">Path of the resource, appended to the base address.</param>
-    /// <param name="id">Optional identifier appended as a path segment.</param>
+    /// <param name="resourceUri">Path of the resource, appended to the base address. An absolute URL is accepted only on a trusted origin; <c>.</c> and <c>..</c> segments, a fragment and embedded credentials are refused.</param>
+    /// <param name="id">Optional identifier appended as a path segment. It is URL-encoded, and <c>.</c> or <c>..</c> segments are refused.</param>
     /// <param name="parameters">Optional query string parameters.</param>
     /// <param name="headers">Optional headers for this call only; they replace same-named default headers.</param>
-    /// <param name="baseUri">Optional base address for this call only.</param>
+    /// <param name="baseUri">Optional base address for this call only. Its origin must be the one of <see cref="HttpClientOptions.BaseUri"/> or be declared in <see cref="HttpClientOptions.TrustedOrigins"/>.</param>
     /// <param name="cancellationToken">Cancels the call, including retry waits.</param>
     protected virtual Task<HttpResult<TResult>> GetAsync<TResult>(
         string resourceUri,
@@ -131,10 +160,10 @@ public abstract class HttpClientBase
     /// <c>POST</c> is not idempotent, so it is <b>not retried</b> unless <see cref="RetryOptions.RetryNonIdempotentMethods"/> is set:
     /// replaying it after a lost response could create the resource twice.
     /// </remarks>
-    /// <param name="resourceUri">Path of the resource, appended to the base address.</param>
+    /// <param name="resourceUri">Path of the resource, appended to the base address. An absolute URL is accepted only on a trusted origin; <c>.</c> and <c>..</c> segments, a fragment and embedded credentials are refused.</param>
     /// <param name="body">Object serialized as JSON; <see langword="null"/> sends no body.</param>
     /// <param name="headers">Optional headers for this call only.</param>
-    /// <param name="baseUri">Optional base address for this call only.</param>
+    /// <param name="baseUri">Optional base address for this call only. Its origin must be the one of <see cref="HttpClientOptions.BaseUri"/> or be declared in <see cref="HttpClientOptions.TrustedOrigins"/>.</param>
     /// <param name="cancellationToken">Cancels the call, including retry waits.</param>
     protected virtual Task<HttpResult<TResult>> PostAsync<TResult>(
         string resourceUri,
@@ -147,11 +176,11 @@ public abstract class HttpClientBase
     /// <summary>Sends a <c>PUT</c> request with a JSON body.</summary>
     /// <typeparam name="TResult">Type the response body is deserialized into; <see cref="string"/> keeps it raw.</typeparam>
     /// <exception cref="ArgumentNullException"><paramref name="body"/> is <see langword="null"/>.</exception>
-    /// <param name="resourceUri">Path of the resource, appended to the base address.</param>
+    /// <param name="resourceUri">Path of the resource, appended to the base address. An absolute URL is accepted only on a trusted origin; <c>.</c> and <c>..</c> segments, a fragment and embedded credentials are refused.</param>
     /// <param name="body">Object serialized as JSON.</param>
-    /// <param name="id">Optional identifier appended as a path segment.</param>
+    /// <param name="id">Optional identifier appended as a path segment. It is URL-encoded, and <c>.</c> or <c>..</c> segments are refused.</param>
     /// <param name="headers">Optional headers for this call only.</param>
-    /// <param name="baseUri">Optional base address for this call only.</param>
+    /// <param name="baseUri">Optional base address for this call only. Its origin must be the one of <see cref="HttpClientOptions.BaseUri"/> or be declared in <see cref="HttpClientOptions.TrustedOrigins"/>.</param>
     /// <param name="cancellationToken">Cancels the call, including retry waits.</param>
     protected virtual Task<HttpResult<TResult>> PutAsync<TResult>(
         string resourceUri,
@@ -263,13 +292,19 @@ public abstract class HttpClientBase
     /// </example>
     /// <typeparam name="TResult">Type of the response body; <see cref="string"/> keeps it raw.</typeparam>
     /// <param name="method">The HTTP method.</param>
-    /// <param name="resourceUri">Path of the resource, appended to the base address.</param>
-    /// <param name="id">Optional identifier appended as a path segment.</param>
+    /// <param name="resourceUri">Path of the resource, appended to the base address. An absolute URL is accepted only on a trusted origin; <c>.</c> and <c>..</c> segments, a fragment and embedded credentials are refused.</param>
+    /// <param name="id">Optional identifier appended as a path segment. It is URL-encoded, and <c>.</c> or <c>..</c> segments are refused.</param>
     /// <param name="parameters">Optional query string parameters.</param>
     /// <param name="body">Object serialized as JSON; <see langword="null"/> sends no body.</param>
     /// <param name="headers">Optional headers for this call only.</param>
-    /// <param name="baseUri">Optional base address for this call only.</param>
+    /// <param name="baseUri">Optional base address for this call only. Its origin must be the one of <see cref="HttpClientOptions.BaseUri"/> or be declared in <see cref="HttpClientOptions.TrustedOrigins"/>.</param>
     /// <param name="cancellationToken">Cancels the call, including retry waits.</param>
+    /// <exception cref="ArgumentException">
+    /// The address is on an origin that is not trusted, uses clear-text <c>http</c>, carries credentials, a fragment or <c>.</c>/<c>..</c> segments; or a header
+    /// has an invalid name, is managed by the HTTP stack, or has a value (or a token) containing a control character. Nothing is sent, and the message never repeats a secret.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">The request was redirected, behind the client's back, to an origin that is not trusted.</exception>
+    /// <exception cref="HttpResponseTooLargeException">The body is larger than <see cref="HttpClientOptions.MaxResponseBytes"/>. It is not retried.</exception>
     /// <exception cref="TimeoutException">Every attempt exceeded <see cref="HttpClientOptions.RequestTimeout"/>.</exception>
     /// <exception cref="HttpRequestException">The transport failed on every attempt.</exception>
     /// <exception cref="JsonException">A successful response body could not be deserialized.</exception>
@@ -286,7 +321,10 @@ public abstract class HttpClientBase
         ArgumentNullException.ThrowIfNull(method);
 
         var uri = RequestUri.Build(baseUri ?? _options.BaseUri, resourceUri, id, parameters);
-        var loggedUri = uri.GetLeftPart(UriPartial.Path); // the query string may carry secrets
+        EnsureTrusted(uri);
+
+        // Scheme, host and path only: the query string and any user info may carry secrets.
+        var loggedUri = uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped);
         // Serialize with the runtime type (not TResult or object) and only once: the same bytes are replayed on every retry.
         var payload = body is null ? null : JsonSerializer.SerializeToUtf8Bytes(body, body.GetType(), JsonSerializerOptions);
 
@@ -309,8 +347,18 @@ public abstract class HttpClientBase
                     attemptCts.CancelAfter(_options.RequestTimeout);
 
                 var client = _httpClientFactory.CreateClient(_options.HttpClientName ?? string.Empty);
-                using var response = await client.SendAsync(request, attemptCts.Token).ConfigureAwait(false);
-                var result = await HttpResult<TResult>.FromResponseAsync(response, JsonSerializerOptions, attemptCts.Token).ConfigureAwait(false);
+
+                // Headers first, body later: the size limit is enforced while reading, so a hostile body is never buffered whole.
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token).ConfigureAwait(false);
+
+                // The HTTP stack may have followed redirects behind our back. A response from an origin nobody declared is not the API's answer.
+                if (response.RequestMessage?.RequestUri is { } finalUri && !_trustedOrigins.Contains(RequestUri.Origin(finalUri)))
+                {
+                    throw new InvalidOperationException(
+                        $"The request was redirected to an origin that is not trusted ({RequestUri.Describe(finalUri.AbsoluteUri)}). Declare it in {nameof(HttpClientOptions.TrustedOrigins)} or disable automatic redirects.");
+                }
+
+                var result = await HttpResult<TResult>.FromResponseAsync(response, JsonSerializerOptions, _options.MaxResponseBytes, attemptCts.Token).ConfigureAwait(false);
 
                 if (result.IsSuccess)
                 {
@@ -384,7 +432,10 @@ public abstract class HttpClientBase
                 ? await asyncFactory(cancellationToken).ConfigureAwait(false)
                 : _options.TokenFactory?.Invoke();
             if (!string.IsNullOrEmpty(token))
+            {
+                ValidateHeaderValue(token, "Authorization");
                 request.Headers.Authorization = new AuthenticationHeaderValue(_options.AuthenticationScheme, token);
+            }
 
             foreach (var (name, valueFactory) in _options.Headers)
                 SetHeader(request, name, valueFactory());
@@ -407,21 +458,73 @@ public abstract class HttpClientBase
     // Headers that .NET only accepts on HttpContent: adding them to HttpRequestMessage.Headers throws.
     private static readonly HashSet<string> ContentHeaderNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Allow", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Length",
+        "Allow", "Content-Disposition", "Content-Encoding", "Content-Language",
         "Content-Location", "Content-MD5", "Content-Range", "Content-Type", "Expires", "Last-Modified",
+    };
+
+    // Headers that frame the message or manage the connection. They belong to the HTTP stack: letting a caller set them is how request
+    // smuggling and cache poisoning start, and nothing legitimate needs it.
+    private static readonly HashSet<string> StackManagedHeaderNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Host", "Content-Length", "Transfer-Encoding", "Connection", "Proxy-Connection", "Keep-Alive", "Upgrade", "TE", "Trailer",
     };
 
     /// <summary>
     /// Sets a header, replacing any previous value. Content headers (<c>Content-Type</c>...) go on the content;
     /// they are ignored for requests without a body, since there is nothing to describe.
     /// </summary>
+    /// <remarks>
+    /// Values are added <i>without</i> the framework's validation (so unusual formats work), which means nothing stops a line break from becoming a
+    /// second header on the wire. That is checked here, so a header name or value that comes from outside the application cannot forge headers.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The name is not a valid header name or is managed by the HTTP stack, or the value contains control characters.</exception>
     private static void SetHeader(HttpRequestMessage request, string name, string value)
     {
+        ValidateHeaderName(name);
+        ValidateHeaderValue(value, name);
+
         HttpHeaders? headers = ContentHeaderNames.Contains(name) ? request.Content?.Headers : request.Headers;
         if (headers is null)
             return;
 
         headers.Remove(name);
         headers.TryAddWithoutValidation(name, value);
+    }
+
+    private static void ValidateHeaderName(string name)
+    {
+        if (string.IsNullOrEmpty(name) || !name.All(IsTokenCharacter))
+            throw new ArgumentException("A header name is not a valid HTTP token (letters, digits and !#$%&'*+-.^_`|~ only).", "headers");
+
+        if (StackManagedHeaderNames.Contains(name))
+            throw new ArgumentException($"The header '{name}' is managed by the HTTP stack and cannot be set.", "headers");
+    }
+
+    // The value is never repeated in the message: it may be a credential. The name is safe to repeat: callers validate it first (or pass a literal).
+    private static void ValidateHeaderValue(string value, string headerName)
+    {
+        foreach (var c in value)
+        {
+            if (c is (< ' ' and not '\t') or '\u007f')
+                throw new ArgumentException($"The value of the header '{headerName}' contains a control character (line break, NUL...).", "headers");
+        }
+    }
+
+    private static bool IsTokenCharacter(char c)
+        => c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9')
+            or '!' or '#' or '$' or '%' or '&' or '\'' or '*' or '+' or '-' or '.' or '^' or '_' or '`' or '|' or '~';
+
+    /// <summary>
+    /// Refuses a request to an origin the application did not declare. Without this, a resource or a <c>baseUri</c> that comes from outside
+    /// would send the token and the default headers to an address of the caller's choosing (credential theft and server-side request forgery).
+    /// </summary>
+    private void EnsureTrusted(Uri uri)
+    {
+        if (!_trustedOrigins.Contains(RequestUri.Origin(uri)))
+        {
+            throw new ArgumentException(
+                $"The address is on an origin this client is not allowed to call ({RequestUri.Describe(uri.AbsoluteUri)}). Declare it in {nameof(HttpClientOptions.TrustedOrigins)} if it is legitimate.",
+                "resourceUri");
+        }
     }
 }

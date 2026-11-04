@@ -105,10 +105,44 @@ A thread-safe, cached `IHttpClientFactory` for tests, scripts and console tools,
 (so a stub is enough to test a client end to end). It disposes the clients it created, not the handler it was given.
 In a hosted application use `AddHttpClient()`, which also manages handler lifetime and DNS refresh.
 
+## Security decisions
+
+A security review of the first version turned up the issues below. Each was reproduced by a test that failed on that version, then fixed; two were also reproduced on a real
+connection before the fix, because they depended on what the framework does and a stub would only have shown what I believed it did.
+
+1. **A client that holds credentials must know where it may send them.** The resource and a per-call `baseUri` are often built from outside data; an absolute URL used to *replace*
+   the base address, token and default headers included. Now an origin (scheme, host, port, compared case-insensitively with default ports normalized) is trusted only if it is the base address,
+   the GraphQL endpoint, or declared in `TrustedOrigins`. Anything else is refused *before* sending. The same check is applied to the origin the response finally came from.
+   *Rejected*: silently dropping the credentials for foreign origins (it hides a bug behind a 401, and does nothing against server-side request forgery).
+2. **Header values are added without validation, so they must be validated here.** `TryAddWithoutValidation` is used so that unusual formats work. It also lets a line break through: on a real connection
+   `"ok\r\nX-Injected: 1"` reached the server as a second header. Names must be HTTP tokens (an invalid one used to be dropped *silently*, as the result of the add was ignored), values (default, per call,
+   token, user agent) may not contain control characters other than a tab, and the headers that frame the message are refused. Error messages never repeat a value: it may be a credential.
+3. **Clear text is opt-in.** `http://` is accepted on the loopback interface (development, tests) or with `AllowInsecureHttp`. The check happens when the client is built, so a bad configuration fails at
+   startup, not on the first production call.
+4. **`Uri` resolves dot segments.** `"../../admin"` as an identifier climbed out of the resource and reached another endpoint with the application's credentials. Whole `.` and `..` segments are
+   refused, also as `%2e` and with `\` (some servers treat it as a separator), in both the resource and the identifier. A literal `%2e%2e` in an identifier is data and stays escaped. A fragment in a
+   resource is refused too: it would swallow the identifier and the parameters.
+5. **Nothing secret in an address, a message or a log.** Credentials in an address are refused; logs use scheme, host and path only (the old code logged the user info along with the path); messages describe an address
+   by scheme, host and port at most.
+6. **Bounded memory.** The body is read after the headers, in chunks, and cut off at `MaxResponseBytes`; a declared length over the limit is refused without reading. The limit error is a dedicated exception that is *not*
+   a `HttpRequestException`, because transport errors are retried and downloading a body that is too large again would only repeat the problem. The attempt timeout covers the body, so a stalled body cannot hang the call.
+7. **Redirects cannot be fully controlled from here.** Measured on the framework used: a cross-origin redirect drops `Authorization` but keeps every other header, so an `X-Api-Key` or a `Cookie` follows. The client does not own
+   the handler, so it cannot forbid redirects. What it does: `SimpleHttpClientFactory` disables them, the README shows the same setting for `AddHttpClient`, and a response from an undeclared origin is never returned.
+   A redirect-following layer that applies the origin rules at each hop is the clean answer, and is listed as future work.
+
+### How the fixes were checked
+
+Besides the regression tests, a hand-made mutation pass removes each guard in turn (39 mutations: every check above, every constant of the header and path rules, the boundary of the size limit, the
+default of the factory) and requires a test to fail. The harness classifies by the **exit code** of the test run, and is validated with a mutation that does nothing (it must survive) as well as an obviously
+wrong one (it must be killed). A first pass, with a harness that parsed the (localized) console text, reported every mutant as killed; the no-op control exposed it. Redone properly, ten real gaps appeared:
+among them a comparison of origins that forgot the scheme (so the token could follow a downgrade from `https` to `http` on the same port) and a size test that also passed when the whole body was read before
+being refused. All are now covered. One mutant survives by design: the log line would still be safe if it printed user info, because user info is refused earlier (defence in depth, equivalent behaviour).
+
 ## Trade-offs and known limits
 
 - `DeleteAsync` returns only a `bool`; use `SendAsync` when you need the status or error body.
 - Pagination is not followed; `ListAsync` deserializes one JSON array.
 - Per-attempt timeouts mean the worst-case duration of a call is roughly
   `(MaxRetries + 1) × RequestTimeout + Σ delays`; budget accordingly or use the caller's `CancellationToken` as an overall deadline.
+- Redirects are not followed by the client (see "Security decisions"), so a 3xx is a result. Following them safely, hop by hop, is future work.
 - GraphQL errors typically come back as `200 OK` with an `errors` array: inspect your envelope type, not only `IsSuccess`.

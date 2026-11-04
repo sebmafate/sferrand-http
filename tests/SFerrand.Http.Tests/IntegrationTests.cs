@@ -173,4 +173,136 @@ public class IntegrationTests
         Assert.AreEqual(40, server.Requests.Select(r => r.Authorization).Distinct().Count()); // one fresh token per request
         Assert.IsTrue(server.Requests.All(r => r.UserAgent == "integration/1.0"));
     }
+
+    #region Security over a real connection
+
+    /// <summary>
+    /// Observed on a real socket before the fix: a header value holding a line break reached the server as a second header. The call is now refused
+    /// before anything is written, so the server never sees it.
+    /// </summary>
+    [TestMethod]
+    public async Task AHeaderValueWithALineBreak_NeverReachesTheServer()
+    {
+        using var server = new LoopbackServer((_, _, response) => Json(response, 200, "{}"));
+        var client = Client(server.BaseUri);
+
+        await Assert.ThrowsExactlyAsync<ArgumentException>(
+            () => client.Get<Widget>("widgets", headers: new Dictionary<string, string> { ["X-Trace"] = "ok\r\nX-Injected: 1" }));
+
+        Assert.IsEmpty(server.Requests);
+    }
+
+    private static Task Redirect(HttpListenerResponse response, string location)
+    {
+        response.StatusCode = 302;
+        response.RedirectLocation = location;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Followed across origins, a redirect keeps every custom header (only <c>Authorization</c> is dropped): <c>X-Api-Key</c> or <c>Cookie</c> would be
+    /// handed to whoever the server points at. The default factory does not follow redirects, so the other server is never contacted.
+    /// </summary>
+    [TestMethod]
+    public async Task ARedirectToAnotherOrigin_IsNotFollowedByTheDefaultFactory()
+    {
+        using var elsewhere = new LoopbackServer((_, _, response) => Json(response, 200, "{}"));
+        using var api = new LoopbackServer((_, _, response) => Redirect(response, elsewhere.BaseUri + "/landing"));
+        var client = Client(api.BaseUri);
+
+        var result = await client.Get<string>("widgets");
+
+        Assert.AreEqual(HttpStatusCode.Found, result.StatusCode);
+        Assert.IsEmpty(elsewhere.Requests);
+    }
+
+    /// <summary>
+    /// A handler that follows redirects (the default of <c>AddHttpClient</c>) cannot be stopped from here, but the answer of an origin nobody declared is
+    /// never returned as the API's.
+    /// </summary>
+    [TestMethod]
+    public async Task WhenTheHandlerFollowsRedirects_TheAnswerOfAnotherOriginIsRefused()
+    {
+        using var elsewhere = new LoopbackServer((_, _, response) => Json(response, 200, """{"name":"evil","size":1}"""));
+        using var api = new LoopbackServer((_, _, response) => Redirect(response, elsewhere.BaseUri + "/landing"));
+        var client = new TestClient(TestClients.Options(o => { o.BaseUri = api.BaseUri + "/api"; o.TokenFactory = () => "tok"; }),
+            new SimpleHttpClientFactory(new SocketsHttpHandler { AllowAutoRedirect = true }));
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => client.Get<Widget>("widgets"));
+    }
+
+    [TestMethod]
+    public async Task ARedirectToTheSameOrigin_IsFollowed_WhenTheHandlerAllowsIt()
+    {
+        using var api = new LoopbackServer((hit, seen, response) => hit == 1
+            ? Redirect(response, "/api/moved")
+            : Json(response, 200, """{"name":"w","size":3}"""));
+        var client = new TestClient(TestClients.Options(o => o.BaseUri = api.BaseUri + "/api"),
+            new SimpleHttpClientFactory(new SocketsHttpHandler { AllowAutoRedirect = true }));
+
+        var result = await client.Get<Widget>("widgets");
+
+        Assert.AreEqual(new Widget("w", 3), result.Result);
+    }
+
+    /// <summary>
+    /// A hostile server that never stops sending: the client gives up at the limit and closes the connection, instead of reading everything and failing at the end.
+    /// Failing late would pass a naive test but still fill the memory, so the test also checks how much the server managed to send before the client hung up.
+    /// </summary>
+    [TestMethod]
+    public async Task AnEndlessBody_IsCutOffAtTheLimit_WithoutBeingReadToTheEnd()
+    {
+        const int chunkSize = 64 * 1024;
+        long chunksSent = 0;
+        using var server = new LoopbackServer(async (_, _, response) =>
+        {
+            response.ContentType = "application/json";
+            response.SendChunked = true;
+            var chunk = new byte[chunkSize];
+            try
+            {
+                for (var i = 0; i < 1000; i++)   // up to 64 MB
+                {
+                    await response.OutputStream.WriteAsync(chunk);
+                    Interlocked.Increment(ref chunksSent);
+                }
+            }
+            catch (Exception)
+            {
+                // the client closed the connection: exactly what we expect
+            }
+        });
+        var client = Client(server.BaseUri, o => o.MaxResponseBytes = 1_000_000);
+
+        await Assert.ThrowsExactlyAsync<HttpResponseTooLargeException>(() => client.Get<string>("widgets"));
+
+        // 1 MB of limit plus what the socket buffers hold: nowhere near the 64 MB on offer.
+        Assert.IsLessThan(20L * 1024 * 1024 / chunkSize, Interlocked.Read(ref chunksSent), "the client kept reading after the limit");
+    }
+
+    /// <summary>
+    /// The server sends the status line and the headers, then stalls in the middle of the body. The timeout of an attempt covers the reading of the body
+    /// too (the body is read after the headers now), so a stalled body cannot hang the call.
+    /// </summary>
+    [TestMethod]
+    public async Task AServerThatStallsInTheMiddleOfTheBody_TriggersTheAttemptTimeout()
+    {
+        using var server = new LoopbackServer(async (_, _, response) =>
+        {
+            response.ContentType = "application/json";
+            response.ContentLength64 = 10_000;
+            await response.OutputStream.WriteAsync(new byte[100]);
+            await response.OutputStream.FlushAsync();
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        });
+        var client = Client(server.BaseUri, o =>
+        {
+            o.RequestTimeout = TimeSpan.FromMilliseconds(300);
+            o.Retry.MaxRetries = 0;
+        });
+
+        await Assert.ThrowsExactlyAsync<TimeoutException>(() => client.Get<string>("widgets"));
+    }
+
+    #endregion
 }
