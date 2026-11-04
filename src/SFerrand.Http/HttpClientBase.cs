@@ -61,44 +61,14 @@ public abstract partial class HttpClientBase
                      ?? Assembly.GetEntryAssembly()?.GetName().Name
                      ?? "SFerrand.Http";
 
+        // The configured user agent is validated with the other options; the fallback comes from the application's name.
         ValidateHeaderValue(_userAgent, "User-Agent");
-        if (_options.MaxResponseBytes is <= 0)
-            throw new ArgumentException($"{nameof(HttpClientOptions.MaxResponseBytes)} must be positive, or null for no limit.", nameof(options));
-        if (_options.MaxDownloadBytes is <= 0)
-            throw new ArgumentException($"{nameof(HttpClientOptions.MaxDownloadBytes)} must be positive, or null for no limit.", nameof(options));
-        if (_options.MaxRedirects < 0)
-            throw new ArgumentException($"{nameof(HttpClientOptions.MaxRedirects)} must not be negative.", nameof(options));
-        if (_options.TotalTimeout is { } total && total <= TimeSpan.Zero && total != Timeout.InfiniteTimeSpan)
-            throw new ArgumentException($"{nameof(HttpClientOptions.TotalTimeout)} must be positive, or null for no deadline.", nameof(options));
-        if (_options.Accept is { } accept)
-            ValidateHeaderValue(accept, "Accept");
-        if (_options.Retry.IdempotencyKeyHeader is { } keyHeader)
-            ValidateHeaderName(keyHeader);
 
-        _trustedOrigins = new HashSet<string>(StringComparer.Ordinal) { ValidateAddress(_options.BaseUri, nameof(HttpClientOptions.BaseUri)) };
-        if (!string.IsNullOrEmpty(_options.GraphQLUri))
-            _trustedOrigins.Add(ValidateAddress(_options.GraphQLUri, nameof(HttpClientOptions.GraphQLUri)));
-        foreach (var origin in _options.TrustedOrigins)
-            _trustedOrigins.Add(ValidateAddress(origin, nameof(HttpClientOptions.TrustedOrigins)));
-    }
+        var errors = HttpClientOptionsValidation.Validate(_options, out var origins);
+        if (errors.Count > 0)
+            throw new ArgumentException(string.Join(" ", errors), nameof(options));
 
-    /// <summary>
-    /// Checks an address given in the options and returns its origin. Refuses what is not an absolute http(s) address, credentials embedded in it,
-    /// and clear-text http to a host that is not the loopback interface (unless <see cref="HttpClientOptions.AllowInsecureHttp"/> says otherwise).
-    /// Messages never repeat more than scheme, host and port: the value may carry secrets.
-    /// </summary>
-    private string ValidateAddress(string? value, string optionName)
-    {
-        if (value is null || !RequestUri.TryParseHttp(value, out var uri))
-            throw new ArgumentException($"{optionName} must be an absolute http(s) URI ({RequestUri.Describe(value)}).", "options");
-
-        if (uri.UserInfo.Length > 0)
-            throw new ArgumentException($"{optionName} must not contain credentials (user:password@host): use TokenFactory or a header.", "options");
-
-        if (uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback && !_options.AllowInsecureHttp)
-            throw new ArgumentException($"{optionName} uses clear-text http ({RequestUri.Describe(value)}): use https, or set {nameof(HttpClientOptions.AllowInsecureHttp)}.", "options");
-
-        return RequestUri.Origin(uri);
+        _trustedOrigins = origins;
     }
 
     /// <summary>

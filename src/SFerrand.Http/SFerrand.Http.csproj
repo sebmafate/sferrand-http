@@ -20,6 +20,11 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
 
+    <!-- Safe to trim and to compile ahead of time: the analyzers run on every build and a warning is an error. JSON metadata comes from JsonTypeInfo,
+         so a source-generated context (HttpClientOptions.JsonSerializerOptions.TypeInfoResolver) is all that is needed. -->
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
+
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>

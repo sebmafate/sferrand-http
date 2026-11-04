@@ -385,13 +385,6 @@ public abstract partial class HttpClientBase
         "Content-Location", "Content-MD5", "Content-Range", "Content-Type", "Expires", "Last-Modified",
     };
 
-    // Headers that frame the message or manage the connection. They belong to the HTTP stack: letting a caller set them is how request
-    // smuggling and cache poisoning start, and nothing legitimate needs it.
-    private static readonly HashSet<string> StackManagedHeaderNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Host", "Content-Length", "Transfer-Encoding", "Connection", "Proxy-Connection", "Keep-Alive", "Upgrade", "TE", "Trailer",
-    };
-
     /// <summary>
     /// Sets a header, replacing any previous value. Content headers (<c>Content-Type</c>...) go on the content;
     /// they are ignored for requests without a body, since there is nothing to describe.
@@ -416,26 +409,15 @@ public abstract partial class HttpClientBase
 
     internal static void ValidateHeaderName(string name)
     {
-        if (string.IsNullOrEmpty(name) || !name.All(IsTokenCharacter))
-            throw new ArgumentException("A header name is not a valid HTTP token (letters, digits and !#$%&'*+-.^_`|~ only).", "headers");
-
-        if (StackManagedHeaderNames.Contains(name))
-            throw new ArgumentException($"The header '{name}' is managed by the HTTP stack and cannot be set.", "headers");
+        if (HeaderRules.NameError(name) is { } error)
+            throw new ArgumentException(error, "headers");
     }
 
-    // The value is never repeated in the message: it may be a credential. The name is safe to repeat: callers validate it first (or pass a literal).
     internal static void ValidateHeaderValue(string value, string headerName)
     {
-        foreach (var c in value)
-        {
-            if (c is (< ' ' and not '\t') or '\u007f')
-                throw new ArgumentException($"The value of the header '{headerName}' contains a control character (line break, NUL...).", "headers");
-        }
+        if (HeaderRules.ValueError(value, headerName) is { } error)
+            throw new ArgumentException(error, "headers");
     }
-
-    private static bool IsTokenCharacter(char c)
-        => c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9')
-            or '!' or '#' or '$' or '%' or '&' or '\'' or '*' or '+' or '-' or '.' or '^' or '_' or '`' or '|' or '~';
 
     /// <summary>
     /// Refuses a request to an origin the application did not declare. Without this, a resource or a <c>baseUri</c> that comes from outside
