@@ -52,6 +52,36 @@ public class HttpResult<TResult>
     /// <summary>The raw response body, kept for error statuses too.</summary>
     public string? Content { get; protected init; }
 
+    /// <summary>The media type of the body (<c>application/json</c>, without parameters), or <see langword="null"/> when none was sent.</summary>
+    public string? ContentType { get; protected init; }
+
+    private ProblemDetails? _problem;
+    private bool _problemRead;
+
+    /// <summary>
+    /// The error body read as a <see cref="ProblemDetails"/> (RFC 9457), or <see langword="null"/> for a success or when the body is not a problem document.
+    /// Parsed on first access.
+    /// </summary>
+    public ProblemDetails? Problem
+    {
+        get
+        {
+            if (!_problemRead)
+            {
+                _problem = !IsSuccess && ProblemDetails.TryParse(Content, out var parsed) ? parsed : null;
+                _problemRead = true;
+            }
+
+            return _problem;
+        }
+    }
+
+    /// <summary>Returns this result when it is a success; throws an <see cref="ApiException"/> otherwise.</summary>
+    /// <returns>This result, to chain: <c>(await GetAsync(...)).EnsureSuccess().Result</c>.</returns>
+    /// <exception cref="ApiException">The status is not a 2xx.</exception>
+    public HttpResult<TResult> EnsureSuccess()
+        => IsSuccess ? this : throw new ApiException(StatusCode, ReasonPhrase, Content, Problem);
+
     /// <summary>The deserialized body; <see langword="null"/> on error statuses and empty bodies.</summary>
     public TResult? Result { get; protected init; }
 
@@ -90,6 +120,7 @@ public class HttpResult<TResult>
             ReasonPhrase = response.ReasonPhrase,
             IsSuccess = isSuccess,
             Content = content,
+            ContentType = response.Content.Headers.ContentType?.MediaType,
             Headers = response.Headers,
             Result = isSuccess ? Deserialize(content, options) : default,
         };

@@ -274,6 +274,24 @@ public abstract partial class HttpClientBase
         return SendAsync<TResult>(HttpMethod.Post, string.Empty, id: null, parameters: null, query, headers, endpoint, cancellationToken);
     }
 
+    /// <summary>
+    /// Sends a GraphQL query and reads the standard <c>{ data, errors }</c> envelope. A GraphQL server answers <c>200 OK</c> even when a field failed:
+    /// call <see cref="GraphQLResponse{TData}.EnsureNoErrors"/> (or look at <see cref="GraphQLResponse{TData}.Errors"/>) after <see cref="HttpResult{TResult}.EnsureSuccess"/>.
+    /// </summary>
+    /// <typeparam name="TData">The shape of <c>data</c>.</typeparam>
+    /// <typeparam name="TVariables">Type of the variables object.</typeparam>
+    /// <param name="query">The query and its variables.</param>
+    /// <param name="headers">Optional headers for this call only.</param>
+    /// <param name="graphQLUri">Optional endpoint for this call only; its origin must be trusted.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <exception cref="InvalidOperationException">No GraphQL endpoint is configured.</exception>
+    protected virtual Task<HttpResult<GraphQLResponse<TData>>> QueryGraphQLAsync<TData, TVariables>(
+        GraphQLQuery<TVariables> query,
+        IDictionary<string, string>? headers = null,
+        string? graphQLUri = null,
+        CancellationToken cancellationToken = default)
+        => SendGraphQLAsync<GraphQLResponse<TData>, TVariables>(query, headers, graphQLUri, cancellationToken);
+
     #endregion
 
     /// <summary>

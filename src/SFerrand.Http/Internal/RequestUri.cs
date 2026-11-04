@@ -38,6 +38,10 @@ internal static class RequestUri
         if (resourceUri.Contains('#', StringComparison.Ordinal))
             throw new ArgumentException("The resource must not contain a fragment ('#'): a fragment is never sent, and would swallow the identifier and the parameters.", nameof(resourceUri));
 
+        // "ftp://host/x" is not a path to append to the base address: it is an address, and not one this client can call.
+        if (HasOtherScheme(resourceUri))
+            throw new ArgumentException("The resource is an address with a scheme other than http or https.", nameof(resourceUri));
+
         if (TryParseHttp(resourceUri, out var parsedResource))
             RejectCredentials(parsedResource, nameof(resourceUri));
 
@@ -78,6 +82,23 @@ internal static class RequestUri
         }
 
         return new Uri(query.Length == 0 ? path : path + "?" + query, UriKind.Absolute);
+    }
+
+    // scheme "://" at the start; a relative path never starts like this.
+    private static bool HasOtherScheme(string resource)
+    {
+        var separator = resource.IndexOf("://", StringComparison.Ordinal);
+        if (separator <= 0 || !char.IsAsciiLetter(resource[0]))
+            return false;
+
+        for (var i = 1; i < separator; i++)
+        {
+            if (!(char.IsAsciiLetterOrDigit(resource[i]) || resource[i] is '+' or '-' or '.'))
+                return false;
+        }
+
+        var scheme = resource[..separator];
+        return !scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) && !scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Parses an absolute http(s) address.</summary>

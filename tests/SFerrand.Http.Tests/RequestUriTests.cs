@@ -94,6 +94,24 @@ public class RequestUriTests
         => Assert.ThrowsExactly<ArgumentException>(() => RequestUri.Build(baseUri, "x"));
 
     [TestMethod]
+    [DataRow("ftp://files.test/x")]
+    [DataRow("file:///etc/passwd")]
+    [DataRow("javascript://x")]
+    [DataRow("s3://bucket/key")]
+    [DataRow("HTTP+X://host/x")]
+    public void AnAddressWithAnotherScheme_IsRefused_NotAppendedToTheBase(string resource)
+        => Assert.ThrowsExactly<ArgumentException>(() => RequestUri.Build("https://api.test/v1", resource));
+
+    /// <summary>Only a scheme at the very start makes an address: a path that merely contains <c>://</c> (in a query, say) is still a path.</summary>
+    [TestMethod]
+    [DataRow("redirect?to=ftp://files.test/x", "https://api.test/v1/redirect?to=ftp://files.test/x")]
+    [DataRow("a/b://c", "https://api.test/v1/a/b://c")]
+    [DataRow("1x://y", "https://api.test/v1/1x://y")]
+    [DataRow("://x", "https://api.test/v1/://x")]
+    public void APathContainingASchemeSeparator_IsStillAPath(string resource, string expected)
+        => Assert.AreEqual(expected, RequestUri.Build("https://api.test/v1", resource).OriginalString);
+
+    [TestMethod]
     public void NullResource_Throws()
         => Assert.ThrowsExactly<ArgumentNullException>(() => RequestUri.Build("https://api.test", null!));
 }

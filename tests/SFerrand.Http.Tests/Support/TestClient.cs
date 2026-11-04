@@ -35,6 +35,15 @@ internal sealed class TestClient : HttpClientBase
     public Task<HttpResult<T>> GraphQL<T, TVariables>(GraphQLQuery<TVariables> query, string? graphQLUri = null)
         => SendGraphQLAsync<T, TVariables>(query, graphQLUri: graphQLUri);
 
+    public IAsyncEnumerable<HttpResult<T>> Pages<T>(string resource, IDictionary<string, string>? parameters = null, Func<HttpResult<T>, PageCursor?>? next = null, int maxPages = 1000, CancellationToken ct = default)
+        => GetPagesAsync(resource, null, parameters, null, null, next, maxPages, ct);
+
+    public IAsyncEnumerable<T> ListAll<T>(string resource, PaginationOptions? paging = null, IDictionary<string, string>? parameters = null, CancellationToken ct = default)
+        => ListAllAsync<T>(resource, null, parameters, null, null, paging, ct);
+
+    public Task<HttpResult<GraphQLResponse<T>>> Query<T, TVariables>(GraphQLQuery<TVariables> query)
+        => QueryGraphQLAsync<T, TVariables>(query);
+
     public Task<HttpResult<string>> Head(string resource)
         => SendAsync<string>(HttpMethod.Head, resource, null, null, null, null, null, CancellationToken.None);
 }
