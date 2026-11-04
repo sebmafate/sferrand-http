@@ -5,8 +5,16 @@
     <RootNamespace>SFerrand.Http</RootNamespace>
 
     <PackageId>SFerrand.Http</PackageId>
-    <Version>1.0.0</Version>
+    <!-- The version is not written here: MinVer derives it from the git tag (v1.2.3 gives 1.2.3).
+         Untagged commits get a pre-release version (e.g. 1.2.4-preview.0.5). See RELEASING.md. -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <MinVerDefaultPreReleaseIdentifiers>preview.0</MinVerDefaultPreReleaseIdentifiers>
     <Authors>Sébastien Ferrand</Authors>
+    <Copyright>Copyright (c) 2026 Sébastien Ferrand</Copyright>
+    <PackageProjectUrl>https://git.vbmaf.net/sebastien/sferrand-http</PackageProjectUrl>
+    <RepositoryUrl>https://git.vbmaf.net/sebastien/sferrand-http.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
     <Description>A base class for typed REST and GraphQL API clients: per-request auth and headers, JSON in/out, a result object instead of exceptions for HTTP errors, retries with exponential backoff and Retry-After support, per-attempt timeouts.</Description>
     <PackageTags>http;httpclient;rest;graphql;retry;backoff;api-client</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -17,6 +25,10 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
+
+    <!-- Fails the pack when the net8.0 and net10.0 assets differ in API; once a version is published,
+         set PackageValidationBaselineVersion to also catch breaking changes against it (see RELEASING.md). -->
+    <EnablePackageValidation>true</EnablePackageValidation>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,6 +40,14 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+    <PackageReference Include="Microsoft.SourceLink.Gitea" Version="10.0.403">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="MinVer" Version="8.0.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>

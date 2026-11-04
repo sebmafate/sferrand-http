@@ -140,13 +140,21 @@ var client = new WidgetsClient(Options.Create(new HttpClientOptions { BaseUri = 
 
 The [test suite](tests/SFerrand.Http.Tests) contains a ready-made recording stub (`Support/StubHandler.cs`).
 
+## Documentation
+
+- **API reference**: every public and protected member is documented with XML comments (shipped in the package, so IntelliSense shows them).
+- [Design notes](docs/DESIGN.md): why it works this way, what was rejected, known limits.
+- [Test suite](tests/README.md): strategy, conventions, timing-sensitive tests.
+- [Contributing](CONTRIBUTING.md), [Changelog](CHANGELOG.md) and [Releasing](RELEASING.md) (versioning and publication of the NuGet package).
+
 ## Build and test
 
 ```
 dotnet test
 ```
 
-The library targets `net8.0` and `net10.0`; the test project runs on `net10.0`.
+The library and its tests target `net8.0` and `net10.0`. The tests run on both when both runtimes are installed (as in CI);
+otherwise the `net8.0` run rolls forward to the newest runtime. Coverage and mutation-check procedures are in [CONTRIBUTING](CONTRIBUTING.md).
 
 ## License
 
