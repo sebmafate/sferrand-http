@@ -45,6 +45,18 @@ public class RequestUriTests
     }
 
     [TestMethod]
+    public void ParameterNamesAndValues_CannotInjectOtherParameters()
+    {
+        // '&', '=' and '#' survive Uri normalization: only explicit encoding keeps them from changing the query structure.
+        var parameters = new Dictionary<string, string> { ["a&b=c#d"] = "x&y=z#w" };
+
+        var uri = RequestUri.Build("https://api.test/v1", "search", parameters: parameters);
+
+        Assert.AreEqual("https://api.test/v1/search?a%26b%3Dc%23d=x%26y%3Dz%23w", uri.AbsoluteUri);
+        Assert.AreEqual(string.Empty, uri.Fragment);
+    }
+
+    [TestMethod]
     public void Parameters_AreAddedAfterAnExistingQuery()
         => Assert.AreEqual(
             "https://api.test/v1/search?sort=asc&page=2",

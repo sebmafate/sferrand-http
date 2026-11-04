@@ -115,6 +115,29 @@ public class HttpResultTests
     }
 
     [TestMethod]
+    public void CreateFromObject_WithAString_KeepsItAsTheRawContent()
+    {
+        var result = HttpResult<string>.CreateFromObject("plain");
+
+        Assert.AreEqual("plain", result.Content);
+        Assert.AreEqual("plain", result.Result);
+    }
+
+    [TestMethod]
+    public void CreateFromObject_HonoursTheSerializerOptions()
+    {
+        var pascal = new JsonSerializerOptions { PropertyNamingPolicy = null };
+
+        var result = HttpResult<Support.Widget>.CreateFromObject(new Support.Widget("w", 3), pascal);
+
+        Assert.AreEqual("""{"Name":"w","Size":3}""", result.Content);
+    }
+
+    [TestMethod]
+    public void ImplicitConversion_OnNull_Throws()
+        => Assert.ThrowsExactly<ArgumentNullException>(() => { Support.Widget? _ = (HttpResult<Support.Widget>)null!; });
+
+    [TestMethod]
     public void ImplicitConversion_UnwrapsTheResult()
     {
         Support.Widget? widget = HttpResult<Support.Widget>.CreateFromObject(new Support.Widget("w", 3));

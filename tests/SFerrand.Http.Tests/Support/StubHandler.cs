@@ -18,7 +18,12 @@ internal sealed class StubHandler : HttpMessageHandler
     private readonly Queue<Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>> _script = new();
     private Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? _last;
 
+    private readonly object _gate = new();
+
     public List<RecordedRequest> Requests { get; } = new();
+
+    /// <summary>Whether the handler itself was disposed (a factory must not dispose a handler it was given).</summary>
+    public bool IsDisposed { get; private set; }
 
     public StubHandler Respond(HttpStatusCode status, string? body = null, Action<HttpResponseMessage>? configure = null)
         => Script((_, _) =>
@@ -55,13 +60,24 @@ internal sealed class StubHandler : HttpMessageHandler
         }
 
         var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-        Requests.Add(new RecordedRequest(request.Method, request.RequestUri!, headers, body));
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? step;
+        lock (_gate)
+        {
+            Requests.Add(new RecordedRequest(request.Method, request.RequestUri!, headers, body));
 
-        if (_script.Count > 0)
-            _last = _script.Dequeue();
+            if (_script.Count > 0)
+                _last = _script.Dequeue();
+            step = _last;
+        }
 
-        return _last is null
+        return step is null
             ? new HttpResponseMessage(HttpStatusCode.OK)
-            : await _last(request, cancellationToken);
+            : await step(request, cancellationToken);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        IsDisposed = true;
+        base.Dispose(disposing);
     }
 }
