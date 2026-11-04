@@ -91,6 +91,30 @@ public class HttpClientOptions
     /// </summary>
     public long? MaxResponseBytes { get; set; } = 64L * 1024 * 1024;
 
+    /// <summary>
+    /// Redirects the client follows itself, hop by hop. Each hop must lead to a trusted origin and may not downgrade to clear text, and credentials stop at the
+    /// first change of origin. <c>0</c> returns every 3xx to the caller as a result. Default: 5.
+    /// </summary>
+    /// <remarks>
+    /// Effective only when the handler does not follow redirects itself (see the README, "Redirects"): <see cref="SimpleHttpClientFactory"/> never does.
+    /// A 301 or 302 turns a <c>POST</c> into a <c>GET</c> and a 303 any method into a <c>GET</c>; a 307 or 308 keeps method and body, but is not followed to another
+    /// origin when it carries a body.
+    /// </remarks>
+    public int MaxRedirects { get; set; } = 5;
+
+    /// <summary>
+    /// Deadline of a whole call: every attempt, retry wait and redirect included. Exceeding it raises a <see cref="TimeoutException"/>. Complements
+    /// <see cref="RequestTimeout"/>, which bounds one attempt. <see langword="null"/> (the default) sets no overall deadline; the caller's
+    /// <see cref="CancellationToken"/> can always be used as one.
+    /// </summary>
+    public TimeSpan? TotalTimeout { get; set; }
+
+    /// <summary>
+    /// Value of the <c>Accept</c> header, set on every request unless a default or per-call header replaces it. Default: <c>application/json</c>.
+    /// <see langword="null"/> sends none.
+    /// </summary>
+    public string? Accept { get; set; } = "application/json";
+
     /// <summary>Retry policy.</summary>
     public RetryOptions Retry { get; } = new();
 }

@@ -32,7 +32,7 @@ namespace SFerrand.Http;
 /// <item>Transient failures are retried according to <see cref="HttpClientOptions.Retry"/>; only idempotent methods by default.</item>
 /// </list>
 /// </remarks>
-public abstract class HttpClientBase
+public abstract partial class HttpClientBase
 {
     private readonly HttpClientOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -64,6 +64,14 @@ public abstract class HttpClientBase
         ValidateHeaderValue(_userAgent, "User-Agent");
         if (_options.MaxResponseBytes is <= 0)
             throw new ArgumentException($"{nameof(HttpClientOptions.MaxResponseBytes)} must be positive, or null for no limit.", nameof(options));
+        if (_options.MaxRedirects < 0)
+            throw new ArgumentException($"{nameof(HttpClientOptions.MaxRedirects)} must not be negative.", nameof(options));
+        if (_options.TotalTimeout is { } total && total <= TimeSpan.Zero && total != Timeout.InfiniteTimeSpan)
+            throw new ArgumentException($"{nameof(HttpClientOptions.TotalTimeout)} must be positive, or null for no deadline.", nameof(options));
+        if (_options.Accept is { } accept)
+            ValidateHeaderValue(accept, "Accept");
+        if (_options.Retry.IdempotencyKeyHeader is { } keyHeader)
+            ValidateHeaderName(keyHeader);
 
         _trustedOrigins = new HashSet<string>(StringComparer.Ordinal) { ValidateAddress(_options.BaseUri, nameof(HttpClientOptions.BaseUri)) };
         if (!string.IsNullOrEmpty(_options.GraphQLUri))
@@ -308,7 +316,7 @@ public abstract class HttpClientBase
     /// <exception cref="TimeoutException">Every attempt exceeded <see cref="HttpClientOptions.RequestTimeout"/>.</exception>
     /// <exception cref="HttpRequestException">The transport failed on every attempt.</exception>
     /// <exception cref="JsonException">A successful response body could not be deserialized.</exception>
-    protected virtual async Task<HttpResult<TResult>> SendAsync<TResult>(
+    protected virtual Task<HttpResult<TResult>> SendAsync<TResult>(
         HttpMethod method,
         string resourceUri,
         string? id,
@@ -320,211 +328,9 @@ public abstract class HttpClientBase
     {
         ArgumentNullException.ThrowIfNull(method);
 
-        var uri = RequestUri.Build(baseUri ?? _options.BaseUri, resourceUri, id, parameters);
-        EnsureTrusted(uri);
-
-        // Scheme, host and path only: the query string and any user info may carry secrets.
-        var loggedUri = uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped);
-        // Serialize with the runtime type (not TResult or object) and only once: the same bytes are replayed on every retry.
-        var payload = body is null ? null : JsonSerializer.SerializeToUtf8Bytes(body, body.GetType(), JsonSerializerOptions);
-
-        var retry = _options.Retry;
-        // A non-idempotent method gets a single attempt: retrying it could repeat a side effect.
-        var maxAttempts = retry.IsEligible(method) ? Math.Max(retry.MaxRetries, 0) + 1 : 1;
-
-        for (var attempt = 1; ; attempt++)
-        {
-            TimeSpan delay;
-            var stopwatch = Stopwatch.StartNew();
-            try
-            {
-                using var request = await CreateRequestAsync(method, uri, payload, headers, cancellationToken).ConfigureAwait(false);
-
-                // The timeout applies to one attempt (headers + body read), not to the whole call. It is a linked source,
-                // so the caller's token still cancels immediately, and we can tell the two cases apart in the catch below.
-                using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                if (_options.RequestTimeout > TimeSpan.Zero && _options.RequestTimeout != Timeout.InfiniteTimeSpan)
-                    attemptCts.CancelAfter(_options.RequestTimeout);
-
-                var client = _httpClientFactory.CreateClient(_options.HttpClientName ?? string.Empty);
-
-                // Headers first, body later: the size limit is enforced while reading, so a hostile body is never buffered whole.
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token).ConfigureAwait(false);
-
-                // The HTTP stack may have followed redirects behind our back. A response from an origin nobody declared is not the API's answer.
-                if (response.RequestMessage?.RequestUri is { } finalUri && !_trustedOrigins.Contains(RequestUri.Origin(finalUri)))
-                {
-                    throw new InvalidOperationException(
-                        $"The request was redirected to an origin that is not trusted ({RequestUri.Describe(finalUri.AbsoluteUri)}). Declare it in {nameof(HttpClientOptions.TrustedOrigins)} or disable automatic redirects.");
-                }
-
-                var result = await HttpResult<TResult>.FromResponseAsync(response, JsonSerializerOptions, _options.MaxResponseBytes, attemptCts.Token).ConfigureAwait(false);
-
-                if (result.IsSuccess)
-                {
-                    _logger.LogDebug("HTTP {Method} {Uri} -> {StatusCode} in {ElapsedMs} ms", method, loggedUri, (int)result.StatusCode, stopwatch.ElapsedMilliseconds);
-                    return result;
-                }
-
-                // null means "do not retry": attempts exhausted, status not retryable, or Retry-After longer than MaxDelay.
-                var nextDelay = attempt < maxAttempts && retry.RetryStatusCodes.Contains(result.StatusCode)
-                    ? retry.GetDelay(attempt, response.Headers.RetryAfter)
-                    : null;
-
-                if (nextDelay is null)
-                {
-                    _logger.LogWarning("HTTP {Method} {Uri} -> {StatusCode} {ReasonPhrase} in {ElapsedMs} ms", method, loggedUri, (int)result.StatusCode, result.ReasonPhrase, stopwatch.ElapsedMilliseconds);
-                    return result;
-                }
-
-                delay = nextDelay.Value;
-                _logger.LogWarning("HTTP {Method} {Uri} -> {StatusCode}; retry {Attempt}/{MaxRetries} in {DelayMs} ms", method, loggedUri, (int)result.StatusCode, attempt, maxAttempts - 1, (int)delay.TotalMilliseconds);
-            }
-            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
-            {
-                // Not cancelled by the caller (that case is not caught and propagates as is): the attempt timed out.
-                if (attempt >= maxAttempts)
-                    throw new TimeoutException($"HTTP {method} {loggedUri} timed out after {_options.RequestTimeout.TotalSeconds:0.##} s (attempts: {attempt}).", ex);
-
-                delay = retry.GetDelay(attempt)!.Value;
-                _logger.LogWarning("HTTP {Method} {Uri} timed out; retry {Attempt}/{MaxRetries} in {DelayMs} ms", method, loggedUri, attempt, maxAttempts - 1, (int)delay.TotalMilliseconds);
-            }
-            catch (HttpRequestException ex) when (attempt < maxAttempts)
-            {
-                delay = retry.GetDelay(attempt)!.Value;
-                _logger.LogWarning(ex, "HTTP {Method} {Uri} failed; retry {Attempt}/{MaxRetries} in {DelayMs} ms", method, loggedUri, attempt, maxAttempts - 1, (int)delay.TotalMilliseconds);
-            }
-
-            // Reached only when a retry was decided above; every other path returned or threw.
-            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Builds a fresh request: a message cannot be sent twice, so every attempt gets its own.
-    /// Headers are applied in increasing priority: <c>User-Agent</c>, authorization, option headers, per-call headers.
-    /// </summary>
-    private async Task<HttpRequestMessage> CreateRequestAsync(
-        HttpMethod method,
-        Uri uri,
-        byte[]? payload,
-        IDictionary<string, string>? headers,
-        CancellationToken cancellationToken)
-    {
-        var request = new HttpRequestMessage(method, uri);
-        try
-        {
-            if (_options.HttpVersion is { } version)
-            {
-                request.Version = version;
-                request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
-            }
-
-            if (payload is not null)
-            {
-                request.Content = new ByteArrayContent(payload);
-                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
-            }
-
-            request.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
-
-            var token = _options.AsyncTokenFactory is { } asyncFactory
-                ? await asyncFactory(cancellationToken).ConfigureAwait(false)
-                : _options.TokenFactory?.Invoke();
-            if (!string.IsNullOrEmpty(token))
-            {
-                ValidateHeaderValue(token, "Authorization");
-                request.Headers.Authorization = new AuthenticationHeaderValue(_options.AuthenticationScheme, token);
-            }
-
-            foreach (var (name, valueFactory) in _options.Headers)
-                SetHeader(request, name, valueFactory());
-
-            if (headers is not null)
-            {
-                foreach (var (name, value) in headers)
-                    SetHeader(request, name, value);
-            }
-
-            return request;
-        }
-        catch
-        {
-            request.Dispose();
-            throw;
-        }
-    }
-
-    // Headers that .NET only accepts on HttpContent: adding them to HttpRequestMessage.Headers throws.
-    private static readonly HashSet<string> ContentHeaderNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Allow", "Content-Disposition", "Content-Encoding", "Content-Language",
-        "Content-Location", "Content-MD5", "Content-Range", "Content-Type", "Expires", "Last-Modified",
-    };
-
-    // Headers that frame the message or manage the connection. They belong to the HTTP stack: letting a caller set them is how request
-    // smuggling and cache poisoning start, and nothing legitimate needs it.
-    private static readonly HashSet<string> StackManagedHeaderNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Host", "Content-Length", "Transfer-Encoding", "Connection", "Proxy-Connection", "Keep-Alive", "Upgrade", "TE", "Trailer",
-    };
-
-    /// <summary>
-    /// Sets a header, replacing any previous value. Content headers (<c>Content-Type</c>...) go on the content;
-    /// they are ignored for requests without a body, since there is nothing to describe.
-    /// </summary>
-    /// <remarks>
-    /// Values are added <i>without</i> the framework's validation (so unusual formats work), which means nothing stops a line break from becoming a
-    /// second header on the wire. That is checked here, so a header name or value that comes from outside the application cannot forge headers.
-    /// </remarks>
-    /// <exception cref="ArgumentException">The name is not a valid header name or is managed by the HTTP stack, or the value contains control characters.</exception>
-    private static void SetHeader(HttpRequestMessage request, string name, string value)
-    {
-        ValidateHeaderName(name);
-        ValidateHeaderValue(value, name);
-
-        HttpHeaders? headers = ContentHeaderNames.Contains(name) ? request.Content?.Headers : request.Headers;
-        if (headers is null)
-            return;
-
-        headers.Remove(name);
-        headers.TryAddWithoutValidation(name, value);
-    }
-
-    private static void ValidateHeaderName(string name)
-    {
-        if (string.IsNullOrEmpty(name) || !name.All(IsTokenCharacter))
-            throw new ArgumentException("A header name is not a valid HTTP token (letters, digits and !#$%&'*+-.^_`|~ only).", "headers");
-
-        if (StackManagedHeaderNames.Contains(name))
-            throw new ArgumentException($"The header '{name}' is managed by the HTTP stack and cannot be set.", "headers");
-    }
-
-    // The value is never repeated in the message: it may be a credential. The name is safe to repeat: callers validate it first (or pass a literal).
-    private static void ValidateHeaderValue(string value, string headerName)
-    {
-        foreach (var c in value)
-        {
-            if (c is (< ' ' and not '\t') or '\u007f')
-                throw new ArgumentException($"The value of the header '{headerName}' contains a control character (line break, NUL...).", "headers");
-        }
-    }
-
-    private static bool IsTokenCharacter(char c)
-        => c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9')
-            or '!' or '#' or '$' or '%' or '&' or '\'' or '*' or '+' or '-' or '.' or '^' or '_' or '`' or '|' or '~';
-
-    /// <summary>
-    /// Refuses a request to an origin the application did not declare. Without this, a resource or a <c>baseUri</c> that comes from outside
-    /// would send the token and the default headers to an address of the caller's choosing (credential theft and server-side request forgery).
-    /// </summary>
-    private void EnsureTrusted(Uri uri)
-    {
-        if (!_trustedOrigins.Contains(RequestUri.Origin(uri)))
-        {
-            throw new ArgumentException(
-                $"The address is on an origin this client is not allowed to call ({RequestUri.Describe(uri.AbsoluteUri)}). Declare it in {nameof(HttpClientOptions.TrustedOrigins)} if it is legitimate.",
-                "resourceUri");
-        }
+        return SendCoreAsync(
+            method, resourceUri, id, parameters, RequestBody.From(body, JsonSerializerOptions), headers, baseUri,
+            (response, token) => HttpResult<TResult>.FromResponseAsync(response, JsonSerializerOptions, _options.MaxResponseBytes, token),
+            cancellationToken);
     }
 }

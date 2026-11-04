@@ -49,11 +49,41 @@ public class RetryOptions
     /// </summary>
     public bool RetryNonIdempotentMethods { get; set; }
 
-    /// <summary>Whether <paramref name="method"/> may be replayed at all.</summary>
-    internal bool IsEligible(HttpMethod method)
+    /// <summary>
+    /// Name of a header (usually <c>Idempotency-Key</c>) that makes <c>POST</c> and <c>PATCH</c> safe to retry. When set, each of these calls carries a fresh key, the
+    /// <b>same</b> on every attempt, so the server can recognize a replay and answer with the original outcome instead of repeating the side effect. Those calls are
+    /// then retried like the others. A key passed by the caller in the headers of the call is used as is. <see langword="null"/> (the default) sends none.
+    /// </summary>
+    /// <remarks>Only enable it for an API that honours the header: a server that ignores it would execute the replay.</remarks>
+    public string? IdempotencyKeyHeader { get; set; }
+
+    /// <summary>Produces the value of the idempotency key. Default: a new GUID in its <c>D</c> form. Called once per call.</summary>
+    public Func<string> IdempotencyKeyFactory { get; set; } = static () => Guid.NewGuid().ToString("D");
+
+    /// <summary>Whether <paramref name="method"/> may be replayed: idempotent methods, or any method when it carries an idempotency key.</summary>
+    internal bool IsEligible(HttpMethod method, bool hasIdempotencyKey = false)
         => RetryNonIdempotentMethods
+           || (hasIdempotencyKey && IsKeyable(method))
            || method == HttpMethod.Get || method == HttpMethod.Head || method == HttpMethod.Options
            || method == HttpMethod.Put || method == HttpMethod.Delete;
+
+    private static bool IsKeyable(HttpMethod method) => method == HttpMethod.Post || method == HttpMethod.Patch;
+
+    /// <summary>
+    /// The key to add to the request, or <see langword="null"/> when none is needed: the feature is off, the method does not need one, or the caller supplied one
+    /// (<paramref name="hasKey"/> is then still <see langword="true"/>, since the call is safe to replay).
+    /// </summary>
+    internal string? ResolveIdempotencyKey(HttpMethod method, IDictionary<string, string>? callHeaders, out bool hasKey)
+    {
+        hasKey = false;
+        if (IdempotencyKeyHeader is not { } header || !IsKeyable(method))
+            return null;
+
+        hasKey = true;
+        return callHeaders is not null && callHeaders.Keys.Any(k => string.Equals(k, header, StringComparison.OrdinalIgnoreCase))
+            ? null
+            : IdempotencyKeyFactory();
+    }
 
     /// <summary>
     /// Computes how long to wait before retry number <paramref name="attempt"/> (1 for the first retry).

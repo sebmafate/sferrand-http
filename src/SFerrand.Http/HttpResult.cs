@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using SFerrand.Http.Internal;
 
 namespace SFerrand.Http;
 
@@ -13,6 +14,9 @@ namespace SFerrand.Http;
 [DebuggerDisplay("[{StatusCode}] IsSuccess={IsSuccess}, ReasonPhrase={ReasonPhrase}, Content={Content}")]
 public class HttpResult<TResult>
 {
+    // Shared and frozen at first use: nobody else holds a reference to it, so nothing can mutate it. Creating one per call would be wasteful.
+    private static readonly JsonSerializerOptions DefaultJsonOptions = new(JsonSerializerDefaults.Web);
+
     /// <summary>Creates an empty result. Use <see cref="FromResponseAsync"/> to build one from a response.</summary>
     protected HttpResult() { }
 
@@ -100,7 +104,7 @@ public class HttpResult<TResult>
             IsSuccess = true,
             StatusCode = HttpStatusCode.OK,
             ReasonPhrase = "OK",
-            Content = result is string text ? text : JsonSerializer.Serialize(result, options ?? new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            Content = result is string text ? text : JsonSerializer.Serialize(result, JsonMetadata.Get<TResult>(options ?? DefaultJsonOptions)),
             Result = result,
         };
 
@@ -161,6 +165,6 @@ public class HttpResult<TResult>
 
         return string.IsNullOrWhiteSpace(content)
             ? default
-            : JsonSerializer.Deserialize<TResult>(content, options ?? new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            : JsonSerializer.Deserialize(content, JsonMetadata.Get<TResult>(options ?? DefaultJsonOptions));
     }
 }

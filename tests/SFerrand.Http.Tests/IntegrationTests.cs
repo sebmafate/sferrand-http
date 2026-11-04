@@ -200,20 +200,37 @@ public class IntegrationTests
     }
 
     /// <summary>
-    /// Followed across origins, a redirect keeps every custom header (only <c>Authorization</c> is dropped): <c>X-Api-Key</c> or <c>Cookie</c> would be
-    /// handed to whoever the server points at. The default factory does not follow redirects, so the other server is never contacted.
+    /// Followed blindly across origins, a redirect keeps every custom header (only <c>Authorization</c> is dropped): <c>X-Api-Key</c> or <c>Cookie</c> would be
+    /// handed to whoever the server points at. The client follows redirects itself and refuses an origin that was not declared, before sending anything to it.
     /// </summary>
     [TestMethod]
-    public async Task ARedirectToAnotherOrigin_IsNotFollowedByTheDefaultFactory()
+    public async Task ARedirectToAnUndeclaredOrigin_IsRefused_AndThatServerIsNeverContacted()
     {
         using var elsewhere = new LoopbackServer((_, _, response) => Json(response, 200, "{}"));
         using var api = new LoopbackServer((_, _, response) => Redirect(response, elsewhere.BaseUri + "/landing"));
         var client = Client(api.BaseUri);
 
-        var result = await client.Get<string>("widgets");
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => client.Get<string>("widgets"));
 
-        Assert.AreEqual(HttpStatusCode.Found, result.StatusCode);
         Assert.IsEmpty(elsewhere.Requests);
+    }
+
+    /// <summary>A redirect to another origin that the application did declare is followed, with no credential and no custom header.</summary>
+    [TestMethod]
+    public async Task ARedirectToADeclaredOrigin_IsFollowed_WithoutCredentials()
+    {
+        using var elsewhere = new LoopbackServer((_, _, response) => Json(response, 200, """{"name":"w","size":3}"""));
+        using var api = new LoopbackServer((_, _, response) => Redirect(response, elsewhere.BaseUri + "/landing"));
+        var client = Client(api.BaseUri, o => o.TrustedOrigins.Add(elsewhere.BaseUri));
+
+        var result = await client.Get<Widget>("widgets");
+
+        Assert.AreEqual(new Widget("w", 3), result.Result);
+        var seen = elsewhere.Requests.Single();
+        Assert.AreEqual("/landing", seen.PathAndQuery);
+        Assert.IsNull(seen.Authorization);
+        Assert.IsNull(seen.Custom);
+        Assert.AreEqual("integration/1.0", seen.UserAgent);
     }
 
     /// <summary>
