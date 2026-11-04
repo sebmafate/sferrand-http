@@ -166,4 +166,48 @@ public class HttpClientBaseEdgeCaseTests
         Assert.IsTrue(handler.Requests.All(r => r.Header("Authorization")!.StartsWith("Bearer t")));
         Assert.HasCount(100, handler.Requests.Select(r => r.Header("Authorization")).Distinct().ToList());
     }
+
+    /// <summary>
+    /// The body is read after the headers, so a connection dropped in the middle of it is an <see cref="IOException"/> (not an <see cref="HttpRequestException"/>
+    /// any more, as when the framework buffered the body). It is the same transient failure and must keep being retried.
+    /// </summary>
+    [TestMethod]
+    public async Task AConnectionDroppedWhileReadingTheBody_IsRetried()
+    {
+        var handler = new StubHandler()
+            .Respond(HttpStatusCode.OK, null, r => r.Content = new StreamContent(new ThrowingStream()))
+            .Respond(HttpStatusCode.OK, WidgetJson);
+        var client = TestClients.Create(handler);
+
+        var result = await client.Get<Widget>("widgets");
+
+        Assert.IsTrue(result.IsSuccess);
+        Assert.HasCount(2, handler.Requests);
+    }
+
+    [TestMethod]
+    public async Task AConnectionDroppedWhileReadingTheBody_OnEveryAttempt_ThrowsAnHttpRequestException()
+    {
+        var handler = new StubHandler().Respond(HttpStatusCode.OK, null, r => r.Content = new StreamContent(new ThrowingStream()));
+        var client = TestClients.Create(handler, o => o.Retry.MaxRetries = 2);
+
+        var ex = await Assert.ThrowsExactlyAsync<HttpRequestException>(() => client.Get<Widget>("widgets"));
+
+        Assert.IsInstanceOfType<IOException>(ex.InnerException);
+        Assert.HasCount(3, handler.Requests);
+    }
+
+    private sealed class ThrowingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new IOException("connection reset");
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
 }

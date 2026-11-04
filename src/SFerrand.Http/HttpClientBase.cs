@@ -64,6 +64,8 @@ public abstract partial class HttpClientBase
         ValidateHeaderValue(_userAgent, "User-Agent");
         if (_options.MaxResponseBytes is <= 0)
             throw new ArgumentException($"{nameof(HttpClientOptions.MaxResponseBytes)} must be positive, or null for no limit.", nameof(options));
+        if (_options.MaxDownloadBytes is <= 0)
+            throw new ArgumentException($"{nameof(HttpClientOptions.MaxDownloadBytes)} must be positive, or null for no limit.", nameof(options));
         if (_options.MaxRedirects < 0)
             throw new ArgumentException($"{nameof(HttpClientOptions.MaxRedirects)} must not be negative.", nameof(options));
         if (_options.TotalTimeout is { } total && total <= TimeSpan.Zero && total != Timeout.InfiniteTimeSpan)

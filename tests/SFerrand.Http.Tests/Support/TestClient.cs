@@ -44,6 +44,15 @@ internal sealed class TestClient : HttpClientBase
     public Task<HttpResult<GraphQLResponse<T>>> Query<T, TVariables>(GraphQLQuery<TVariables> query)
         => QueryGraphQLAsync<T, TVariables>(query);
 
+    public Task<HttpResult<T>> Form<T>(string resource, IEnumerable<KeyValuePair<string, string>> fields, IDictionary<string, string>? headers = null)
+        => PostFormAsync<T>(resource, fields, headers);
+
+    public Task<HttpResult<T>> Multipart<T>(string resource, MultipartForm form)
+        => PostMultipartAsync<T>(resource, form);
+
+    public Task<HttpResult<long>> Download(string resource, Stream destination, long? maxBytes = null, CancellationToken ct = default)
+        => DownloadAsync(resource, destination, maxBytes: maxBytes, cancellationToken: ct);
+
     public Task<HttpResult<string>> Head(string resource)
         => SendAsync<string>(HttpMethod.Head, resource, null, null, null, null, null, CancellationToken.None);
 }

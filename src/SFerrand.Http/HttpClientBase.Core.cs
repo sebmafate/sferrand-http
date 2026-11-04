@@ -105,6 +105,16 @@ public abstract partial class HttpClientBase
                     delay = retry.GetDelay(attempt)!.Value;
                     Log.RetryAfterException(_logger, ex, method, loggedUri, attempt, maxAttempts - 1, (int)delay.TotalMilliseconds);
                 }
+                catch (IOException ex) when (ex is not DownloadInterruptedException)
+                {
+                    // The body is read after the headers, so a connection dropped in the middle of it surfaces here (HttpIOException), no longer wrapped in an
+                    // HttpRequestException by the framework. It is the same transient failure as before, and gets the same treatment.
+                    if (attempt >= maxAttempts)
+                        throw new HttpRequestException("The connection was lost while the response was being read.", ex);
+
+                    delay = retry.GetDelay(attempt)!.Value;
+                    Log.RetryAfterException(_logger, ex, method, loggedUri, attempt, maxAttempts - 1, (int)delay.TotalMilliseconds);
+                }
 
                 // Reached only when a retry was decided above; every other path returned or threw.
                 HttpClientTelemetry.Retries.Add(1, HttpClientTelemetry.Tags(method, uri, finalStatus, errorType));

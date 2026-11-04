@@ -126,6 +126,18 @@ public class HttpResult<TResult>
         };
     }
 
+    /// <summary>A successful result whose payload went to a stream: <see cref="Result"/> holds the number of bytes written, <see cref="Content"/> is empty.</summary>
+    internal static HttpResult<TResult> FromStreamed(HttpResponseMessage response, TResult written)
+        => new()
+        {
+            StatusCode = response.StatusCode,
+            ReasonPhrase = response.ReasonPhrase,
+            IsSuccess = true,
+            ContentType = response.Content.Headers.ContentType?.MediaType,
+            Headers = response.Headers,
+            Result = written,
+        };
+
     /// <summary>Wraps an already available object in a successful (<c>200 OK</c>) result, e.g. for a cache hit or a test double.</summary>
     /// <param name="result">The value exposed as <see cref="Result"/>.</param>
     /// <param name="options">JSON options used to fill <see cref="Content"/>. Default: <see cref="JsonSerializerDefaults.Web"/>.</param>

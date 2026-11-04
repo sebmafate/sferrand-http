@@ -321,5 +321,55 @@ public class IntegrationTests
         await Assert.ThrowsExactlyAsync<TimeoutException>(() => client.Get<string>("widgets"));
     }
 
+    /// <summary>
+    /// The real thing, not a stub: the server announces 1000 bytes, sends 100, then drops the connection. The framework reports it as an I/O error while the body is
+    /// read, which the client treats as a transient failure and retries.
+    /// </summary>
+    [TestMethod]
+    public async Task AConnectionDroppedInTheMiddleOfTheBody_IsRetried()
+    {
+        using var server = new LoopbackServer(async (hit, _, response) =>
+        {
+            if (hit == 1)
+            {
+                response.ContentType = "application/json";
+                response.ContentLength64 = 1000;
+                await response.OutputStream.WriteAsync(new byte[100]);
+                await response.OutputStream.FlushAsync();
+                response.Abort();
+                return;
+            }
+
+            await Json(response, 200, """{"name":"w","size":3}""");
+        });
+        var client = Client(server.BaseUri);
+
+        var result = await client.Get<Widget>("widgets");
+
+        Assert.AreEqual(new Widget("w", 3), result.Result);
+        Assert.HasCount(2, server.Requests);
+    }
+
+    /// <summary>A download goes to the stream as it arrives (here three megabytes, chunked), and the count is exact.</summary>
+    [TestMethod]
+    public async Task ADownload_StreamsARealBody()
+    {
+        var payload = new byte[3 * 1024 * 1024];
+        new Random(1).NextBytes(payload);
+        using var server = new LoopbackServer(async (_, _, response) =>
+        {
+            response.ContentType = "application/octet-stream";
+            response.SendChunked = true;
+            await response.OutputStream.WriteAsync(payload);
+        });
+        var client = Client(server.BaseUri);
+        using var destination = new MemoryStream();
+
+        var result = await client.Download("files/1", destination);
+
+        Assert.AreEqual(payload.Length, result.Result);
+        CollectionAssert.AreEqual(payload, destination.ToArray());
+    }
+
     #endregion
 }

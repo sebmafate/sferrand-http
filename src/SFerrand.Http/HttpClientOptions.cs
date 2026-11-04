@@ -73,6 +73,12 @@ public class HttpClientOptions
     public Version? HttpVersion { get; set; }
 
     /// <summary>
+    /// Largest download accepted by <c>DownloadAsync</c>, in bytes (the body goes to a stream, not to memory, so it can be far larger than
+    /// <see cref="MaxResponseBytes"/>). <see langword="null"/> removes the limit. Default: 1 GiB.
+    /// </summary>
+    public long? MaxDownloadBytes { get; set; } = 1024L * 1024 * 1024;
+
+    /// <summary>
     /// Origins (<c>https://host[:port]</c>) other than <see cref="BaseUri"/> and <see cref="GraphQLUri"/> that this client may talk to.
     /// A request to any other origin is refused before it is sent: credentials and default headers are never sent to an address the
     /// application did not declare, whatever a resource path or a per-call <c>baseUri</c> says.
